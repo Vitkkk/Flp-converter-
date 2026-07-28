@@ -217,8 +217,7 @@ object FlmWriter {
         for (timed in sorted) {
             writeInt(out, convertTicks(timed.tick, sourcePpq))
 
-            val duration = timed.note.length.toDouble() /
-                (sourcePpq.coerceAtLeast(1) * FLP_LENGTH_UNITS_PER_FLM_UNIT)
+            val duration = effectiveDuration(timed, sorted, sourcePpq)
             val minimumDuration = 1.0 /
                 (FLM_TICKS_PER_BEAT * FLP_LENGTH_UNITS_PER_FLM_UNIT)
 
@@ -232,6 +231,43 @@ object FlmWriter {
         }
 
         return out.toByteArray()
+    }
+
+    /**
+     * Normal notes keep the calibrated duration used by 0.3.5. When a normal
+     * note is the carrier for one or more slide notes, it is prolonged only
+     * enough to remain active through the end of the last associated slide.
+     *
+     * A slide is associated when its start is inside the carrier's original
+     * FLP note span. This preserves short notes elsewhere and fixes slide
+     * chains without globally increasing every note length.
+     */
+    private fun effectiveDuration(
+        timed: TimedNote,
+        notes: List<TimedNote>,
+        sourcePpq: Int
+    ): Double {
+        val ppq = sourcePpq.coerceAtLeast(1).toDouble()
+        val defaultDuration = timed.note.length.toDouble() /
+            (ppq * FLP_LENGTH_UNITS_PER_FLM_UNIT)
+
+        if (timed.note.slide) return defaultDuration
+
+        val carrierStartBeat = timed.tick.toDouble() / ppq
+        val originalEndTick = timed.tick + timed.note.length
+        var requiredEndBeat = carrierStartBeat + defaultDuration
+
+        for (candidate in notes) {
+            if (!candidate.note.slide) continue
+            if (candidate.tick < timed.tick || candidate.tick >= originalEndTick) continue
+
+            val slideEndBeat = candidate.tick.toDouble() / ppq +
+                candidate.note.length.toDouble() /
+                (ppq * FLP_LENGTH_UNITS_PER_FLM_UNIT)
+            requiredEndBeat = max(requiredEndBeat, slideEndBeat)
+        }
+
+        return requiredEndBeat - carrierStartBeat
     }
 
     private fun collectNotes(
