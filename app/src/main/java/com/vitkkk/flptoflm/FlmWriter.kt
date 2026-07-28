@@ -55,10 +55,16 @@ object FlmWriter {
 
         output += masterChannel
         repeat(outputCount) { index ->
-            val name = project.channels.getOrNull(index)?.name
+            val sourceChannel = project.channels.getOrNull(index)
+            val name = sourceChannel?.name
                 ?.takeIf { it.isNotBlank() }
                 ?: "Canal ${index + 1}"
-            val notes = collectNotes(project, index)
+
+            // Piano-roll notes refer to the channel IID, not necessarily the
+            // zero-based visual index in the rack.
+            val sourceRackIid = sourceChannel?.iid ?: index
+            val notes = collectNotes(project, sourceRackIid)
+
             output += buildGeneratorChannel(
                 template = generatorChannelTemplate,
                 index = index,
@@ -206,22 +212,23 @@ object FlmWriter {
 
         val out = ByteArrayOutputStream()
         writeShort(out, EVN2_VERSION)
-        var previousFlmTick = 0
 
         for (timed in sorted) {
             val absoluteFlmTick = convertTicks(timed.tick, sourcePpq)
-            val delta = (absoluteFlmTick - previousFlmTick).coerceAtLeast(0)
-            previousFlmTick = absoluteFlmTick
 
-            writeInt(out, delta)
+            // Despite being called "delta" in older reverse-engineering notes,
+            // current FL Studio Mobile stores the absolute note position here.
+            // Writing differences between consecutive notes made nearly every
+            // note pile up at the beginning of the piano roll.
+            writeInt(out, absoluteFlmTick)
             writeDouble(
                 out,
                 (timed.note.length.toDouble() / sourcePpq.coerceAtLeast(1))
                     .coerceAtLeast(1.0 / FLM_PPQ)
             )
             writeShort(out, timed.note.key.coerceIn(0, 127))
-            out.write(scale127To255(timed.note.velocity))
-            out.write(scale127To255(timed.note.pan))
+            out.write(scale128To255(timed.note.velocity))
+            out.write(scale128To255(timed.note.pan))
             writeShort(out, mapFinePitch(timed.note.finePitch))
             out.write(0) // repeat
             out.write(if (timed.note.slide) 1 else 0)
@@ -230,7 +237,7 @@ object FlmWriter {
         return out.toByteArray()
     }
 
-    private fun collectNotes(project: FlpProject, rackChannel: Int): List<TimedNote> {
+    private fun collectNotes(project: FlpProject, rackChannelIid: Int): List<TimedNote> {
         val patterns = project.patterns.associateBy { it.id }
         val result = mutableListOf<TimedNote>()
 
@@ -238,7 +245,7 @@ object FlmWriter {
             for (item in project.playlist) {
                 val pattern = patterns[item.patternId] ?: continue
                 for (note in pattern.notes) {
-                    if (note.rackChannel != rackChannel) continue
+                    if (note.rackChannel != rackChannelIid) continue
                     val start = item.position + note.position
                     val itemEnd = item.position + item.length
                     if (item.length > 0L && start >= itemEnd) continue
@@ -249,7 +256,7 @@ object FlmWriter {
             // Some projects use pattern mode and have no playlist placements.
             for (pattern in project.patterns) {
                 for (note in pattern.notes) {
-                    if (note.rackChannel == rackChannel) {
+                    if (note.rackChannel == rackChannelIid) {
                         result += TimedNote(note.position.coerceAtLeast(0L), note)
                     }
                 }
@@ -263,8 +270,8 @@ object FlmWriter {
         return scaled.roundToInt().coerceAtLeast(0)
     }
 
-    private fun scale127To255(value: Int): Int =
-        (value.coerceIn(0, 127) * 255.0 / 127.0).roundToInt().coerceIn(0, 255)
+    private fun scale128To255(value: Int): Int =
+        (value.coerceIn(0, 128) * 255.0 / 128.0).roundToInt().coerceIn(0, 255)
 
     private fun mapFinePitch(value: Int): Int {
         // FLP note fine pitch is centered around 120. FLM uses 32767 as center.
