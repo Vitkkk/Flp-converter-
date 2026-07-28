@@ -126,7 +126,7 @@ object FlmEffectAwareWriter {
             // control. Leaving SMPR unchanged keeps the Mobile module fully audible;
             // non-zero custom mixes are translated normally.
             val safeSlot = if (slot.mix == 0) slot.copy(mix = null) else slot
-            val translated = MobileEffectSettingsTranslatorV2.translate(safeSlot)
+            val translated = MobileEffectAudioSafety.translate(safeSlot)
             if (translated == null) {
                 unsupported += pluginName
             } else {
