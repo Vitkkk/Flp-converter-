@@ -1,0 +1,8 @@
+Commit: 6d634ebddc6a01255d464c523cb633596421028b
+Data UTC: 2026-07-28T20:25:56Z
+
+e: file:///home/runner/work/Flp-converter-/Flp-converter-/app/src/main/java/com/vitkkk/flptoflm/MainActivity.kt:210:85 Unresolved reference 'isNullOrEmpty'.
+FAILURE: Build failed with an exception.
+* What went wrong:
+Execution failed for task ':app:compileDebugKotlin'.
+org.gradle.api.tasks.TaskExecutionException: Execution failed for task ':app:compileDebugKotlin'.
