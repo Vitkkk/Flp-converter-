@@ -24,7 +24,9 @@ class MainActivity : Activity() {
 
     private var selectedName: String? = null
     private var selectedProject: FlpProject? = null
+    private var selectedMixer: FlpMixerScan = FlpMixerScan.EMPTY
     private var pendingOutput: ByteArray? = null
+    private var pendingSummary: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -48,7 +50,7 @@ class MainActivity : Activity() {
             setPadding(0, 6, 0, 0)
         }
         val subtitle = TextView(this).apply {
-            text = "Converte melodias do FL Studio para canais DirectWave no FL Studio Mobile"
+            text = "Converte melodias e efeitos compatíveis para canais DirectWave no FL Studio Mobile"
             textSize = 16f
             gravity = Gravity.CENTER
             setPadding(0, 20, 0, 40)
@@ -69,7 +71,7 @@ class MainActivity : Activity() {
             setPadding(0, 36, 0, 24)
         }
         val warning = TextView(this).apply {
-            text = "Cada canal do FLP vira um DirectWave vazio, sem DWP e sem efeitos. Notas, posições, durações, velocity, pan, fine pitch e slide notes são escritas em EVN2."
+            text = "Cada canal do FLP vira um DirectWave vazio. Efeitos nativos compatíveis são adicionados na ordem dos slots e ficam minimizados. Nesta alpha, eles usam o preset padrão do Mobile; a tradução detalhada dos parâmetros ainda está em desenvolvimento."
             textSize = 13f
             setPadding(0, 36, 0, 0)
         }
@@ -97,15 +99,26 @@ class MainActivity : Activity() {
 
     private fun convertToFlm() {
         val project = selectedProject ?: return
-        setBusy(true, "Criando canais DirectWave e convertendo notas...")
+        val mixer = selectedMixer
+        setBusy(true, "Criando DirectWave, notas e efeitos compatíveis...")
 
         Thread {
             try {
                 val base = selectedName?.substringBeforeLast('.') ?: "projeto-convertido"
-                val output = FlmWriter.write(project, base)
+                val result = FlmEffectAwareWriter.write(project, base, mixer)
                 runOnUiThread {
                     if (isFinishing || isDestroyed) return@runOnUiThread
-                    pendingOutput = output
+                    pendingOutput = result.bytes
+                    pendingSummary = buildString {
+                        append("Efeitos adicionados: ").append(result.addedEffects)
+                        if (result.disabledEffectsSkipped > 0) {
+                            append(" • desligados ignorados: ").append(result.disabledEffectsSkipped)
+                        }
+                        if (result.unsupportedEffects.isNotEmpty()) {
+                            append("\nSem equivalente: ")
+                            append(result.unsupportedEffects.joinToString(", "))
+                        }
+                    }
                     setBusy(false)
                     val saveIntent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
                         addCategory(Intent.CATEGORY_OPENABLE)
@@ -148,8 +161,9 @@ class MainActivity : Activity() {
 
     private fun loadFlp(uri: Uri) {
         selectedProject = null
+        selectedMixer = FlpMixerScan.EMPTY
         convertButton.isEnabled = false
-        setBusy(true, "Lendo eventos, patterns e piano rolls...")
+        setBusy(true, "Lendo patterns, piano rolls, Mixer e efeitos...")
 
         Thread {
             try {
@@ -159,10 +173,19 @@ class MainActivity : Activity() {
                     FlpParser.parse(stream, size)
                 } ?: throw IOException("Não foi possível abrir o arquivo.")
 
+                val mixer = try {
+                    contentResolver.openInputStream(uri)?.use(FlpMixerScanner::scan)
+                        ?: FlpMixerScan.EMPTY
+                } catch (_: Throwable) {
+                    // Notes remain convertible even when a new FLP version changes Mixer events.
+                    FlpMixerScan.EMPTY
+                }
+
                 runOnUiThread {
                     if (isFinishing || isDestroyed) return@runOnUiThread
                     selectedName = name
                     selectedProject = project
+                    selectedMixer = mixer
                     status.text = buildString {
                         append(name)
                         append("\nFL Studio: ").append(project.flVersion ?: "versão não identificada")
@@ -173,6 +196,17 @@ class MainActivity : Activity() {
                         append(" • clips na playlist: ").append(project.playlist.size)
                         append("\nNotas: ").append(project.noteCount)
                         append(" • slide notes: ").append(project.slideNoteCount)
+                        append("\nEfeitos encontrados: ").append(mixer.allEffects.size)
+                        append(" • compatíveis: ").append(mixer.compatibleEffects.size)
+                        if (mixer.unsupportedEffects.isNotEmpty()) {
+                            append("\nSem equivalente: ")
+                            append(
+                                mixer.unsupportedEffects
+                                    .mapNotNull { it.bestName }
+                                    .distinct()
+                                    .joinToString(", ")
+                            )
+                        }
                         if (project.sourceSize >= 0L) {
                             append("\nTamanho: ").append(formatSize(project.sourceSize))
                         }
@@ -185,6 +219,7 @@ class MainActivity : Activity() {
                     if (isFinishing || isDestroyed) return@runOnUiThread
                     selectedName = null
                     selectedProject = null
+                    selectedMixer = FlpMixerScan.EMPTY
                     convertButton.isEnabled = false
                     showError("Não foi possível analisar o FLP", t)
                     setBusy(false)
@@ -198,12 +233,16 @@ class MainActivity : Activity() {
             val output = pendingOutput ?: throw IOException("Nenhum projeto convertido disponível.")
             contentResolver.openOutputStream(uri, "w")?.use { it.write(output) }
                 ?: throw IOException("Não foi possível salvar o arquivo.")
-            status.text = "Projeto FLM salvo. Importe ou abra o arquivo no FL Studio Mobile."
+            status.text = buildString {
+                append("Projeto FLM salvo. Importe ou abra no FL Studio Mobile.")
+                pendingSummary?.let { append("\n").append(it) }
+            }
             Toast.makeText(this, "FLM salvo", Toast.LENGTH_LONG).show()
         } catch (t: Throwable) {
             showError("Erro ao salvar", t)
         } finally {
             pendingOutput = null
+            pendingSummary = null
         }
     }
 
