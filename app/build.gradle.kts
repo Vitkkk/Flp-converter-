@@ -11,8 +11,8 @@ android {
         applicationId = "com.vitkkk.flptoflm"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "0.1.1-alpha"
+        versionCode = 3
+        versionName = "0.2.0-alpha"
     }
 
     buildTypes {
@@ -30,5 +30,5 @@ android {
 }
 
 dependencies {
-    // A primeira alpha usa apenas APIs nativas do Android.
+    // The converter uses only native Android APIs in this alpha.
 }
