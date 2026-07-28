@@ -13,14 +13,20 @@ data class FlmEffectWriteResult(
 )
 
 /**
- * Adds compatible FL Studio Mobile modules after each generated DirectWave.
+ * Adds compatible FL Studio Mobile modules after the generated DirectWave.
  *
- * The underlying note/channel project is still produced by [FlmWriter]. This
- * post-processing pass only changes generator RACK chunks, preserving all note
- * and timeline data already validated in the 0.3.x builds.
+ * Master effects are inserted once in the Mobile master rack. Effects from a
+ * numbered FL Studio Mixer insert are cloned only into channels routed to that
+ * insert. Channels routed straight to Master do not receive duplicated master FX.
  */
 object FlmEffectAwareWriter {
     private data class Chunk(val type: String, val payload: ByteArray)
+
+    private data class MappedModules(
+        val templates: List<MobileEffectTemplate>,
+        val disabledSkipped: Int,
+        val unsupported: Set<String>
+    )
 
     fun write(
         project: FlpProject,
@@ -38,31 +44,36 @@ object FlmEffectAwareWriter {
         val patched = top.map { chunk ->
             if (chunk.type != "RACK") return@map chunk
 
-            // First RACK is the master. Following RACKs match generated channels.
-            if (rackOrdinal++ == 0) return@map chunk
-            val channelIndex = rackOrdinal - 2
-            val sourceChannelIid = project.channels.getOrNull(channelIndex)?.iid ?: channelIndex
-            val sourceSlots = mixer.effectsForChannel(sourceChannelIid)
+            val currentRack = rackOrdinal++
+            val sourceSlots: List<FlpEffectSlot>
+            val uniqueRackIndex: Int
 
-            val modules = mutableListOf<MobileEffectTemplate>()
-            for (slot in sourceSlots.sortedBy { it.slotIndex }) {
-                val pluginName = slot.bestName ?: continue
-                if (!slot.enabled) {
-                    disabledSkipped++
-                    continue
-                }
+            if (currentRack == 0) {
+                // FL Studio Master insert (IID 0) becomes the Mobile master rack.
+                sourceSlots = mixer.effectsByInsert[0].orEmpty()
+                uniqueRackIndex = -1
+            } else {
+                val channelIndex = currentRack - 1
+                val sourceChannelIid = project.channels.getOrNull(channelIndex)?.iid ?: channelIndex
+                val mixerInsert = mixer.channelToInsert[sourceChannelIid]
 
-                val template = MobileEffectCatalog.findDesktopEquivalent(pluginName)
-                if (template == null) {
-                    unsupported += pluginName
+                // Insert 0 is Master and was already handled above. A missing route
+                // is also treated as direct-to-master rather than duplicating FX.
+                sourceSlots = if (mixerInsert != null && mixerInsert > 0) {
+                    mixer.effectsByInsert[mixerInsert].orEmpty()
                 } else {
-                    modules += template
+                    emptyList()
                 }
+                uniqueRackIndex = channelIndex
             }
 
-            if (modules.isEmpty()) return@map chunk
-            added += modules.size
-            addEffectsToRack(chunk, channelIndex, modules)
+            val mapped = mapSlots(sourceSlots)
+            disabledSkipped += mapped.disabledSkipped
+            unsupported += mapped.unsupported
+
+            if (mapped.templates.isEmpty()) return@map chunk
+            added += mapped.templates.size
+            addEffectsToRack(chunk, uniqueRackIndex, mapped.templates)
         }
 
         return FlmEffectWriteResult(
@@ -73,20 +84,46 @@ object FlmEffectAwareWriter {
         )
     }
 
+    private fun mapSlots(slots: List<FlpEffectSlot>): MappedModules {
+        val modules = mutableListOf<MobileEffectTemplate>()
+        val unsupported = linkedSetOf<String>()
+        var disabledSkipped = 0
+
+        for (slot in slots.sortedBy { it.slotIndex }) {
+            val pluginName = slot.bestName ?: continue
+            if (!slot.enabled) {
+                disabledSkipped++
+                continue
+            }
+
+            val template = MobileEffectCatalog.findDesktopEquivalent(pluginName)
+            if (template == null) {
+                unsupported += pluginName
+            } else {
+                modules += template
+            }
+        }
+
+        return MappedModules(modules, disabledSkipped, unsupported)
+    }
+
     private fun addEffectsToRack(
         rack: Chunk,
-        channelIndex: Int,
+        rackIndex: Int,
         effects: List<MobileEffectTemplate>
     ): Chunk {
         require(rack.payload.size >= 8) { "RACK FLM incompleto." }
         val prefix = rack.payload.copyOfRange(0, 8)
         val children = parseChunks(rack.payload, 8, rack.payload.size).toMutableList()
 
-        // Keep DirectWave and all existing rack data intact. Effect IDs only need
-        // to be unique inside the project, so use a high deterministic range.
+        // Keep DirectWave and existing rack data intact. Use deterministic high
+        // IDs, with a separate range for the master rack.
+        val idBase = if (rackIndex < 0) 9_000 else 10_000 + rackIndex * 64
         effects.forEachIndexed { effectIndex, template ->
-            val uniqueId = 10_000 + channelIndex * 64 + effectIndex
-            children += Chunk("RMOd", template.collapsedPayload(uniqueId))
+            children += Chunk(
+                "RMOd",
+                template.collapsedPayload(idBase + effectIndex)
+            )
         }
 
         return Chunk("RACK", concat(prefix, encodeChunks(children)))
