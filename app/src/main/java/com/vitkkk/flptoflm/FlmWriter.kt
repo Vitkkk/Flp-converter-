@@ -16,12 +16,12 @@ object FlmWriter {
     private const val EVN2_VERSION = 20
 
     /**
-     * FLP piano-roll note lengths use four internal sub-beat units for every
-     * duration unit stored by current FL Studio Mobile EVN2 events.
+     * Calibration between FLP piano-roll note length units and the duration
+     * value stored by current FL Studio Mobile EVN2 events.
      *
      * Positions do not use this divisor; only note duration does.
      */
-    private const val FLP_LENGTH_UNITS_PER_FLM_UNIT = 4.0
+    private const val FLP_LENGTH_UNITS_PER_FLM_UNIT = 2.0
 
     private data class Chunk(val type: String, val payload: ByteArray)
     private data class TimedNote(val tick: Long, val note: FlpNote)
