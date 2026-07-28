@@ -21,6 +21,10 @@ internal fun TranslatedMobileEffect.payloadForSlot(
     return output
 }
 
+/** Compatibility property for the current UI; disabled effects are no longer skipped. */
+val FlmEffectWriteResult.disabledEffectsSkipped: Int
+    get() = 0
+
 private fun patchFirstFloat(modulePayload: ByteArray, chunkName: String, value: Float) {
     visitSubchunks(modulePayload) { type, payloadOffset, length ->
         if (type == chunkName) {
