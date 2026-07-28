@@ -8,22 +8,26 @@ import kotlin.math.max
 import kotlin.math.roundToInt
 
 /**
- * Writes a real FL Studio Mobile 4.10.x project by cloning a project created by
- * FL Studio Mobile and replacing its generator channels and note events.
- *
- * Each FLP rack channel becomes one empty DirectWave channel. Effects, plugin
- * state and samples are intentionally not copied.
+ * Writes an FL Studio Mobile 4.10.x project by cloning a real Mobile template
+ * and replacing its DirectWave channels and EVN2 note events.
  */
 object FlmWriter {
     private const val FLM_PPQ = 96
     private const val EVN2_VERSION = 20
 
+    /**
+     * FLP piano-roll note lengths use four internal sub-beat units for every
+     * duration unit stored by current FL Studio Mobile EVN2 events.
+     *
+     * Positions do not use this divisor; only note duration does.
+     */
+    private const val FLP_LENGTH_UNITS_PER_FLM_UNIT = 4.0
+
     private data class Chunk(val type: String, val payload: ByteArray)
     private data class TimedNote(val tick: Long, val note: FlpNote)
 
     fun write(project: FlpProject, projectName: String): ByteArray {
-        val template = FlmTemplate.bytes()
-        val top = parseTopLevel(template)
+        val top = parseTopLevel(FlmTemplate.bytes())
 
         val head = top.first { it.type == "HEAD" }
         val keyb = top.first { it.type == "KEYB" }
@@ -43,6 +47,7 @@ object FlmWriter {
 
         val outputCount = project.outputChannelCount.coerceAtLeast(1)
         val output = mutableListOf<Chunk>()
+
         output += patchHead(head, projectName, project.tempo, outputCount)
         output += keyb
         output += meta
@@ -54,14 +59,15 @@ object FlmWriter {
         }
 
         output += masterChannel
+
         repeat(outputCount) { index ->
             val sourceChannel = project.channels.getOrNull(index)
             val name = sourceChannel?.name
                 ?.takeIf { it.isNotBlank() }
                 ?: "Canal ${index + 1}"
 
-            // Piano-roll notes refer to the channel IID, not necessarily the
-            // zero-based visual index in the rack.
+            // FLP piano-roll notes refer to the channel IID, which is not
+            // necessarily equal to the visual zero-based rack index.
             val sourceRackIid = sourceChannel?.iid ?: index
             val notes = collectNotes(project, sourceRackIid)
 
@@ -94,6 +100,7 @@ object FlmWriter {
     private fun buildGeneratorRack(source: Chunk, index: Int): Chunk {
         require(source.payload.size >= 8)
         val prefix = source.payload.copyOfRange(0, 8)
+
         val children = parseChunks(source.payload, 8, source.payload.size).map { child ->
             when (child.type) {
                 "RHED" -> {
@@ -101,18 +108,20 @@ object FlmWriter {
                     if (payload.size >= 8) putInt(payload, 4, index + 2)
                     Chunk(child.type, payload)
                 }
+
                 "RMOd", "RMOD" -> {
                     val payload = child.payload.copyOf()
-                    // moduleType = 1 (DirectWave), moduleId is unique.
                     if (payload.size >= 8) {
-                        putInt(payload, 0, 1)
-                        putInt(payload, 4, index + 2)
+                        putInt(payload, 0, 1) // DirectWave
+                        putInt(payload, 4, index + 2) // unique module ID
                     }
                     Chunk(child.type, payload)
                 }
+
                 else -> child
             }
         }
+
         return Chunk(source.type, concat(prefix, encodeChunks(children)))
     }
 
@@ -125,6 +134,7 @@ object FlmWriter {
     ): Chunk {
         require(template.payload.size >= 8)
         val prefix = template.payload.copyOfRange(0, 8)
+
         val children = parseChunks(template.payload, 8, template.payload.size).map { child ->
             when (child.type) {
                 "CHHD" -> buildChannelHeader(child, index, name)
@@ -132,11 +142,15 @@ object FlmWriter {
                 else -> child
             }
         }
+
         return Chunk(template.type, concat(prefix, encodeChunks(children)))
     }
 
     private fun buildChannelHeader(source: Chunk, index: Int, name: String): Chunk {
-        require(source.payload.size >= 1084) { "CHHD do modelo é menor que o esperado." }
+        require(source.payload.size >= 1084) {
+            "CHHD do modelo é menor que o esperado."
+        }
+
         val fixed = source.payload.copyOfRange(0, 1084)
         writeFixedText(fixed, 0, 1024, name)
         putDouble(fixed, 1028, (index + 1).toDouble())
@@ -150,6 +164,7 @@ object FlmWriter {
         writeInt(out, encodedName.size)
         out.write(encodedName)
         writeInt(out, 0)
+
         return Chunk(source.type, out.toByteArray())
     }
 
@@ -163,13 +178,17 @@ object FlmWriter {
             when (child.type) {
                 "DESc" -> {
                     val payload = child.payload.copyOf()
-                    if (payload.size >= 284) writeFixedText(payload, 28, 256, channelName)
+                    if (payload.size >= 284) {
+                        writeFixedText(payload, 28, 256, channelName)
+                    }
                     Chunk(child.type, payload)
                 }
+
                 "CLIP" -> buildClip(child, notes, sourcePpq)
                 else -> child
             }
         }
+
         return Chunk(source.type, encodeChunks(children))
     }
 
@@ -183,7 +202,10 @@ object FlmWriter {
         putInt(prefix, 0, 0)
 
         val lastTick = notes.maxOfOrNull { it.tick + it.note.length } ?: 0L
-        val patternLengthBeats = max(4.0, ceil(lastTick.toDouble() / sourcePpq.coerceAtLeast(1)))
+        val patternLengthBeats = max(
+            4.0,
+            ceil(lastTick.toDouble() / sourcePpq.coerceAtLeast(1))
+        )
 
         val children = parseChunks(source.payload, 8, source.payload.size).map { child ->
             when (child.type) {
@@ -196,10 +218,12 @@ object FlmWriter {
                     }
                     Chunk(child.type, payload)
                 }
+
                 "EVN2" -> Chunk("EVN2", encodeEvents(notes, sourcePpq))
                 else -> child
             }
         }
+
         return Chunk(source.type, concat(prefix, encodeChunks(children)))
     }
 
@@ -215,17 +239,14 @@ object FlmWriter {
 
         for (timed in sorted) {
             val absoluteFlmTick = convertTicks(timed.tick, sourcePpq)
-
-            // Despite being called "delta" in older reverse-engineering notes,
-            // current FL Studio Mobile stores the absolute note position here.
-            // Writing differences between consecutive notes made nearly every
-            // note pile up at the beginning of the piano roll.
             writeInt(out, absoluteFlmTick)
-            writeDouble(
-                out,
-                (timed.note.length.toDouble() / sourcePpq.coerceAtLeast(1))
-                    .coerceAtLeast(1.0 / FLM_PPQ)
-            )
+
+            val duration = timed.note.length.toDouble() /
+                (sourcePpq.coerceAtLeast(1) * FLP_LENGTH_UNITS_PER_FLM_UNIT)
+            val minimumDuration = 1.0 /
+                (FLM_PPQ * FLP_LENGTH_UNITS_PER_FLM_UNIT)
+
+            writeDouble(out, duration.coerceAtLeast(minimumDuration))
             writeShort(out, timed.note.key.coerceIn(0, 127))
             out.write(scale128To255(timed.note.velocity))
             out.write(scale128To255(timed.note.pan))
@@ -237,23 +258,29 @@ object FlmWriter {
         return out.toByteArray()
     }
 
-    private fun collectNotes(project: FlpProject, rackChannelIid: Int): List<TimedNote> {
+    private fun collectNotes(
+        project: FlpProject,
+        rackChannelIid: Int
+    ): List<TimedNote> {
         val patterns = project.patterns.associateBy { it.id }
         val result = mutableListOf<TimedNote>()
 
         if (project.playlist.isNotEmpty()) {
             for (item in project.playlist) {
                 val pattern = patterns[item.patternId] ?: continue
+
                 for (note in pattern.notes) {
                     if (note.rackChannel != rackChannelIid) continue
+
                     val start = item.position + note.position
                     val itemEnd = item.position + item.length
                     if (item.length > 0L && start >= itemEnd) continue
+
                     result += TimedNote(start.coerceAtLeast(0L), note)
                 }
             }
         } else {
-            // Some projects use pattern mode and have no playlist placements.
+            // Pattern-mode projects can have no arrangement placements.
             for (pattern in project.patterns) {
                 for (note in pattern.notes) {
                     if (note.rackChannel == rackChannelIid) {
@@ -262,6 +289,7 @@ object FlmWriter {
                 }
             }
         }
+
         return result
     }
 
@@ -271,36 +299,56 @@ object FlmWriter {
     }
 
     private fun scale128To255(value: Int): Int =
-        (value.coerceIn(0, 128) * 255.0 / 128.0).roundToInt().coerceIn(0, 255)
+        (value.coerceIn(0, 128) * 255.0 / 128.0)
+            .roundToInt()
+            .coerceIn(0, 255)
 
     private fun mapFinePitch(value: Int): Int {
-        // FLP note fine pitch is centered around 120. FLM uses 32767 as center.
         val offset = value.coerceIn(0, 240) - 120
         return (32767 + offset * 273).coerceIn(0, 65535)
     }
 
     private fun parseTopLevel(bytes: ByteArray): List<Chunk> {
-        require(bytes.size >= 4 && String(bytes, 0, 4, Charsets.US_ASCII) == "10LF") {
+        require(
+            bytes.size >= 4 &&
+                String(bytes, 0, 4, Charsets.US_ASCII) == "10LF"
+        ) {
             "Modelo FLM inválido."
         }
+
         return parseChunks(bytes, 4, bytes.size)
     }
 
-    private fun parseChunks(bytes: ByteArray, start: Int, end: Int): List<Chunk> {
+    private fun parseChunks(
+        bytes: ByteArray,
+        start: Int,
+        end: Int
+    ): List<Chunk> {
         val result = mutableListOf<Chunk>()
         var offset = start
+
         while (offset < end) {
             require(offset + 8 <= end) { "Chunk FLM incompleto." }
+
             val type = String(bytes, offset, 4, Charsets.US_ASCII)
             val length = getInt(bytes, offset + 4)
-            require(length >= 0 && offset + 8L + length <= end.toLong()) {
+
+            require(
+                length >= 0 &&
+                    offset + 8L + length <= end.toLong()
+            ) {
                 "Tamanho inválido no chunk $type."
             }
+
             val payloadStart = offset + 8
             val payloadEnd = payloadStart + length
-            result += Chunk(type, bytes.copyOfRange(payloadStart, payloadEnd))
+            result += Chunk(
+                type,
+                bytes.copyOfRange(payloadStart, payloadEnd)
+            )
             offset = payloadEnd
         }
+
         require(offset == end) { "Estrutura FLM desalinhada." }
         return result
     }
@@ -314,17 +362,30 @@ object FlmWriter {
 
     private fun encodeChunks(chunks: List<Chunk>): ByteArray {
         val out = ByteArrayOutputStream()
+
         for (chunk in chunks) {
             require(chunk.type.length == 4)
             out.write(chunk.type.toByteArray(Charsets.US_ASCII))
             writeInt(out, chunk.payload.size)
             out.write(chunk.payload)
         }
+
         return out.toByteArray()
     }
 
-    private fun writeFixedText(target: ByteArray, offset: Int, size: Int, text: String) {
-        java.util.Arrays.fill(target, offset, offset + size, 0.toByte())
+    private fun writeFixedText(
+        target: ByteArray,
+        offset: Int,
+        size: Int,
+        text: String
+    ) {
+        java.util.Arrays.fill(
+            target,
+            offset,
+            offset + size,
+            0.toByte()
+        )
+
         val encoded = text.toByteArray(Charsets.UTF_8)
         val count = minOf(encoded.size, size - 1)
         encoded.copyInto(target, offset, 0, count)
@@ -337,14 +398,27 @@ object FlmWriter {
         }
 
     private fun getInt(bytes: ByteArray, offset: Int): Int =
-        ByteBuffer.wrap(bytes, offset, 4).order(ByteOrder.LITTLE_ENDIAN).int
+        ByteBuffer
+            .wrap(bytes, offset, 4)
+            .order(ByteOrder.LITTLE_ENDIAN)
+            .int
 
     private fun putInt(bytes: ByteArray, offset: Int, value: Int) {
-        ByteBuffer.wrap(bytes, offset, 4).order(ByteOrder.LITTLE_ENDIAN).putInt(value)
+        ByteBuffer
+            .wrap(bytes, offset, 4)
+            .order(ByteOrder.LITTLE_ENDIAN)
+            .putInt(value)
     }
 
-    private fun putDouble(bytes: ByteArray, offset: Int, value: Double) {
-        ByteBuffer.wrap(bytes, offset, 8).order(ByteOrder.LITTLE_ENDIAN).putDouble(value)
+    private fun putDouble(
+        bytes: ByteArray,
+        offset: Int,
+        value: Double
+    ) {
+        ByteBuffer
+            .wrap(bytes, offset, 8)
+            .order(ByteOrder.LITTLE_ENDIAN)
+            .putDouble(value)
     }
 
     private fun writeShort(out: ByteArrayOutputStream, value: Int) {
@@ -359,8 +433,16 @@ object FlmWriter {
         out.write((value ushr 24) and 0xff)
     }
 
-    private fun writeDouble(out: ByteArrayOutputStream, value: Double) {
-        val bytes = ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN).putDouble(value).array()
+    private fun writeDouble(
+        out: ByteArrayOutputStream,
+        value: Double
+    ) {
+        val bytes = ByteBuffer
+            .allocate(8)
+            .order(ByteOrder.LITTLE_ENDIAN)
+            .putDouble(value)
+            .array()
+
         out.write(bytes)
     }
 }
