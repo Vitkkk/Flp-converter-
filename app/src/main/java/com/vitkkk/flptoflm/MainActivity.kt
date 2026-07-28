@@ -41,6 +41,12 @@ class MainActivity : Activity() {
             textSize = 30f
             gravity = Gravity.CENTER
         }
+        val version = TextView(this).apply {
+            text = "Versão ${BuildConfig.VERSION_NAME}"
+            textSize = 13f
+            gravity = Gravity.CENTER
+            setPadding(0, 6, 0, 0)
+        }
         val subtitle = TextView(this).apply {
             text = "Converte melodias do FL Studio para canais DirectWave no FL Studio Mobile"
             textSize = 16f
@@ -63,12 +69,13 @@ class MainActivity : Activity() {
             setPadding(0, 36, 0, 24)
         }
         val warning = TextView(this).apply {
-            text = "Alpha 0.3: cada canal do FLP vira um DirectWave vazio, sem DWP e sem efeitos. Notas, posições, durações, velocity, pan, fine pitch e slide notes são escritas em EVN2."
+            text = "Cada canal do FLP vira um DirectWave vazio, sem DWP e sem efeitos. Notas, posições, durações, velocity, pan, fine pitch e slide notes são escritas em EVN2."
             textSize = 13f
             setPadding(0, 36, 0, 0)
         }
 
         root.addView(title, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        root.addView(version, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         root.addView(subtitle, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         root.addView(chooseButton, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         root.addView(status, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
