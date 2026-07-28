@@ -16,8 +16,12 @@ object FlmWriter {
     private const val FLM_TICKS_PER_BEAT = 128
     private const val EVN2_VERSION = 20
 
-    /** Calibrated independently from the EVN2 position scale. */
-    private const val FLP_LENGTH_UNITS_PER_FLM_UNIT = 2.0
+    /**
+     * FLP note lengths are already expressed in the source project's PPQ.
+     * A value of 1.0 preserves every note's individual original duration:
+     * short notes stay short and long notes stay long.
+     */
+    private const val FLP_LENGTH_UNITS_PER_FLM_UNIT = 1.0
 
     private data class Chunk(val type: String, val payload: ByteArray)
     private data class TimedNote(val tick: Long, val note: FlpNote)
@@ -234,13 +238,10 @@ object FlmWriter {
     }
 
     /**
-     * Normal notes keep the calibrated duration used by 0.3.5. When a normal
-     * note is the carrier for one or more slide notes, it is prolonged only
-     * enough to remain active through the end of the last associated slide.
-     *
-     * A slide is associated when its start is inside the carrier's original
-     * FLP note span. This preserves short notes elsewhere and fixes slide
-     * chains without globally increasing every note length.
+     * Every note begins with its own exact FLP length. Normal carrier notes are
+     * prolonged only when a slide that starts inside them continues past their
+     * end. This preserves rapid short notes while keeping long notes and slide
+     * chains alive for their complete source duration.
      */
     private fun effectiveDuration(
         timed: TimedNote,
@@ -248,14 +249,14 @@ object FlmWriter {
         sourcePpq: Int
     ): Double {
         val ppq = sourcePpq.coerceAtLeast(1).toDouble()
-        val defaultDuration = timed.note.length.toDouble() /
+        val sourceDuration = timed.note.length.toDouble() /
             (ppq * FLP_LENGTH_UNITS_PER_FLM_UNIT)
 
-        if (timed.note.slide) return defaultDuration
+        if (timed.note.slide) return sourceDuration
 
         val carrierStartBeat = timed.tick.toDouble() / ppq
         val originalEndTick = timed.tick + timed.note.length
-        var requiredEndBeat = carrierStartBeat + defaultDuration
+        var requiredEndBeat = carrierStartBeat + sourceDuration
 
         for (candidate in notes) {
             if (!candidate.note.slide) continue
