@@ -15,6 +15,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Corrigir visibilidade da API interna Kotlin
+        shell: bash
+        run: |
+          FILE="app/src/main/java/com/vitkkk/flptoflm/MobileEffectSettingsTranslator.kt"
+          sed -i 's/^enum class EffectSettingsQuality/internal enum class EffectSettingsQuality/' "$FILE"
+          sed -i 's/^data class TranslatedMobileEffect/internal data class TranslatedMobileEffect/' "$FILE"
+          sed -i 's/^object MobileEffectSettingsTranslator/internal object MobileEffectSettingsTranslator/' "$FILE"
+          grep -E '^(internal )?(enum class EffectSettingsQuality|data class TranslatedMobileEffect|object MobileEffectSettingsTranslator)' "$FILE"
+
       - name: Configurar Java 17
         uses: actions/setup-java@v4
         with:
