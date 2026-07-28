@@ -207,7 +207,9 @@ class MainActivity : Activity() {
                         append(" • slide notes: ").append(project.slideNoteCount)
                         append("\nEfeitos encontrados: ").append(mixer.allEffects.size)
                         append(" • compatíveis: ").append(mixer.compatibleEffects.size)
-                        val states = mixer.compatibleEffects.count { !it.pluginData.isNullOrEmpty() }
+                        val states = mixer.compatibleEffects.count { effect ->
+                            effect.pluginData?.isNotEmpty() == true
+                        }
                         append(" • com settings: ").append(states)
                         if (mixer.unsupportedEffects.isNotEmpty()) {
                             append("\nSem equivalente: ")
