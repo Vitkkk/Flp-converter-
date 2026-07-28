@@ -1,42 +1,98 @@
 package com.vitkkk.flptoflm
 
+import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
+import java.io.EOFException
+import java.io.InputStream
 
-/** Minimal FLP container inspection for the first Android alpha. */
+/** Minimal FLP container inspection for the Android alpha. */
 data class FlpProject(
     val format: Int,
     val channels: Int,
     val ppq: Int,
-    val sourceSize: Int
+    val sourceSize: Long
 )
 
 object FlpInspector {
-    fun inspect(bytes: ByteArray): FlpProject {
-        require(bytes.size >= 22) { "Arquivo pequeno demais para ser um FLP." }
-        require(String(bytes, 0, 4, Charsets.US_ASCII) == "FLhd") { "Assinatura FLhd não encontrada." }
+    fun inspect(bytes: ByteArray): FlpProject =
+        ByteArrayInputStream(bytes).use { inspect(it, bytes.size.toLong()) }
 
-        val headerLength = leInt(bytes, 4)
-        require(headerLength >= 6) { "Cabeçalho FLP inválido." }
-        val format = leShort(bytes, 8)
-        val channels = leShort(bytes, 10)
-        val ppq = leShort(bytes, 12)
-        require(channels in 1..65535) { "Número de canais inválido." }
+    /**
+     * Reads only the FLP container header instead of loading the complete project into RAM.
+     * This keeps large projects from killing the Android process during file selection.
+     */
+    fun inspect(input: InputStream, sourceSize: Long = -1L): FlpProject {
+        val signature = readExact(input, 4)
+        require(String(signature, Charsets.US_ASCII) == "FLhd") {
+            "Assinatura FLhd não encontrada."
+        }
+
+        val headerLength = readLeUnsignedInt(input)
+        require(headerLength in 6L..1_048_576L) { "Cabeçalho FLP inválido." }
+
+        val format = readLeUnsignedShort(input)
+        val channels = readLeUnsignedShort(input)
+        val ppq = readLeUnsignedShort(input)
+        require(channels in 1..65_535) { "Número de canais inválido." }
         require(ppq > 0) { "PPQ inválido." }
 
-        val dataOffset = 8 + headerLength
-        require(dataOffset + 8 <= bytes.size) { "Chunk de dados ausente." }
-        require(String(bytes, dataOffset, 4, Charsets.US_ASCII) == "FLdt") { "Chunk FLdt não encontrado." }
+        skipFully(input, headerLength - 6L)
 
-        return FlpProject(format, channels, ppq, bytes.size)
+        val dataSignature = readExact(input, 4)
+        require(String(dataSignature, Charsets.US_ASCII) == "FLdt") {
+            "Chunk FLdt não encontrado."
+        }
+
+        // Confirms that the FLdt length field exists, without loading its payload.
+        readLeUnsignedInt(input)
+
+        return FlpProject(format, channels, ppq, sourceSize)
     }
 
-    private fun leShort(bytes: ByteArray, offset: Int): Int =
-        ByteBuffer.wrap(bytes, offset, 2).order(ByteOrder.LITTLE_ENDIAN).short.toInt() and 0xffff
+    private fun readExact(input: InputStream, count: Int): ByteArray {
+        val result = ByteArray(count)
+        var offset = 0
+        while (offset < count) {
+            val read = input.read(result, offset, count - offset)
+            if (read < 0) throw EOFException("O arquivo terminou antes do esperado.")
+            offset += read
+        }
+        return result
+    }
 
-    private fun leInt(bytes: ByteArray, offset: Int): Int =
-        ByteBuffer.wrap(bytes, offset, 4).order(ByteOrder.LITTLE_ENDIAN).int
+    private fun readLeUnsignedShort(input: InputStream): Int {
+        val b0 = input.read()
+        val b1 = input.read()
+        if (b0 < 0 || b1 < 0) throw EOFException("Cabeçalho FLP incompleto.")
+        return b0 or (b1 shl 8)
+    }
+
+    private fun readLeUnsignedInt(input: InputStream): Long {
+        val b0 = input.read()
+        val b1 = input.read()
+        val b2 = input.read()
+        val b3 = input.read()
+        if (b0 < 0 || b1 < 0 || b2 < 0 || b3 < 0) {
+            throw EOFException("Cabeçalho FLP incompleto.")
+        }
+        return b0.toLong() or
+            (b1.toLong() shl 8) or
+            (b2.toLong() shl 16) or
+            (b3.toLong() shl 24)
+    }
+
+    private fun skipFully(input: InputStream, count: Long) {
+        var remaining = count
+        while (remaining > 0L) {
+            val skipped = input.skip(remaining)
+            if (skipped > 0L) {
+                remaining -= skipped
+            } else {
+                if (input.read() < 0) throw EOFException("Cabeçalho FLP incompleto.")
+                remaining--
+            }
+        }
+    }
 }
 
 /**
