@@ -50,7 +50,7 @@ class MainActivity : Activity() {
             setPadding(0, 6, 0, 0)
         }
         val subtitle = TextView(this).apply {
-            text = "Converte melodias e efeitos compatíveis para canais DirectWave no FL Studio Mobile"
+            text = "Converte melodias, slide notes e efeitos para o FL Studio Mobile"
             textSize = 16f
             gravity = Gravity.CENTER
             setPadding(0, 20, 0, 40)
@@ -71,7 +71,7 @@ class MainActivity : Activity() {
             setPadding(0, 36, 0, 24)
         }
         val warning = TextView(this).apply {
-            text = "Cada canal do FLP vira um DirectWave vazio. Efeitos nativos compatíveis são adicionados na ordem dos slots e ficam minimizados. Nesta alpha, eles usam o preset padrão do Mobile; a tradução detalhada dos parâmetros ainda está em desenvolvimento."
+            text = "Cada canal do FLP vira um DirectWave vazio. Efeitos nativos compatíveis são adicionados na ordem dos slots, minimizados e recebem os parâmetros do FLP. Quando os módulos possuem controles diferentes, a configuração é adaptada para manter o resultado sonoro mais próximo."
             textSize = 13f
             setPadding(0, 36, 0, 0)
         }
@@ -100,7 +100,7 @@ class MainActivity : Activity() {
     private fun convertToFlm() {
         val project = selectedProject ?: return
         val mixer = selectedMixer
-        setBusy(true, "Criando DirectWave, notas e efeitos compatíveis...")
+        setBusy(true, "Criando DirectWave e traduzindo notas, slides e settings dos efeitos...")
 
         Thread {
             try {
@@ -111,12 +111,21 @@ class MainActivity : Activity() {
                     pendingOutput = result.bytes
                     pendingSummary = buildString {
                         append("Efeitos adicionados: ").append(result.addedEffects)
+                        append("\nSettings diretos: ").append(result.directSettings)
+                        append(" • adaptados: ").append(result.adaptedSettings)
+                        if (result.defaultSettings > 0) {
+                            append(" • padrão: ").append(result.defaultSettings)
+                        }
                         if (result.disabledEffectsSkipped > 0) {
-                            append(" • desligados ignorados: ").append(result.disabledEffectsSkipped)
+                            append("\nDesligados ignorados: ").append(result.disabledEffectsSkipped)
                         }
                         if (result.unsupportedEffects.isNotEmpty()) {
                             append("\nSem equivalente: ")
                             append(result.unsupportedEffects.joinToString(", "))
+                        }
+                        if (result.settingsNotes.isNotEmpty()) {
+                            append("\n\nTraduções:\n")
+                            append(result.settingsNotes.joinToString("\n") { "• $it" })
                         }
                     }
                     setBusy(false)
@@ -163,7 +172,7 @@ class MainActivity : Activity() {
         selectedProject = null
         selectedMixer = FlpMixerScan.EMPTY
         convertButton.isEnabled = false
-        setBusy(true, "Lendo patterns, piano rolls, Mixer e efeitos...")
+        setBusy(true, "Lendo patterns, piano rolls, Mixer, efeitos e presets...")
 
         Thread {
             try {
@@ -198,6 +207,8 @@ class MainActivity : Activity() {
                         append(" • slide notes: ").append(project.slideNoteCount)
                         append("\nEfeitos encontrados: ").append(mixer.allEffects.size)
                         append(" • compatíveis: ").append(mixer.compatibleEffects.size)
+                        val states = mixer.compatibleEffects.count { !it.pluginData.isNullOrEmpty() }
+                        append(" • com settings: ").append(states)
                         if (mixer.unsupportedEffects.isNotEmpty()) {
                             append("\nSem equivalente: ")
                             append(
