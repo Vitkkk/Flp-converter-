@@ -4,16 +4,21 @@ import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
-/** Result of the first effect-aware FLM conversion pass. */
+/** Result of the effect-aware FLM conversion pass. */
 data class FlmEffectWriteResult(
     val bytes: ByteArray,
     val addedEffects: Int,
     val unsupportedEffects: List<String>,
-    val disabledEffectsSkipped: Int
+    val disabledEffectsSkipped: Int,
+    val directSettings: Int,
+    val adaptedSettings: Int,
+    val defaultSettings: Int,
+    val settingsNotes: List<String>
 )
 
 /**
- * Adds compatible FL Studio Mobile modules after the generated DirectWave.
+ * Adds compatible FL Studio Mobile modules after the generated DirectWave and
+ * translates the native Fruity plugin state into Mobile PRMS/SMPR values.
  *
  * Master effects are inserted once in the Mobile master rack. Effects from a
  * numbered FL Studio Mixer insert are cloned only into channels routed to that
@@ -23,7 +28,7 @@ object FlmEffectAwareWriter {
     private data class Chunk(val type: String, val payload: ByteArray)
 
     private data class MappedModules(
-        val templates: List<MobileEffectTemplate>,
+        val effects: List<TranslatedMobileEffect>,
         val disabledSkipped: Int,
         val unsupported: Set<String>
     )
@@ -39,7 +44,11 @@ object FlmEffectAwareWriter {
         var rackOrdinal = 0
         var added = 0
         var disabledSkipped = 0
+        var direct = 0
+        var adapted = 0
+        var defaults = 0
         val unsupported = linkedSetOf<String>()
+        val notes = linkedSetOf<String>()
 
         val patched = top.map { chunk ->
             if (chunk.type != "RACK") return@map chunk
@@ -71,21 +80,34 @@ object FlmEffectAwareWriter {
             disabledSkipped += mapped.disabledSkipped
             unsupported += mapped.unsupported
 
-            if (mapped.templates.isEmpty()) return@map chunk
-            added += mapped.templates.size
-            addEffectsToRack(chunk, uniqueRackIndex, mapped.templates)
+            for (effect in mapped.effects) {
+                when (effect.quality) {
+                    EffectSettingsQuality.DIRECT -> direct++
+                    EffectSettingsQuality.ADAPTED -> adapted++
+                    EffectSettingsQuality.DEFAULT -> defaults++
+                }
+                notes += "${effect.template.mobileName}: ${effect.description}"
+            }
+
+            if (mapped.effects.isEmpty()) return@map chunk
+            added += mapped.effects.size
+            addEffectsToRack(chunk, uniqueRackIndex, mapped.effects)
         }
 
         return FlmEffectWriteResult(
             bytes = encodeTopLevel(patched),
             addedEffects = added,
             unsupportedEffects = unsupported.toList(),
-            disabledEffectsSkipped = disabledSkipped
+            disabledEffectsSkipped = disabledSkipped,
+            directSettings = direct,
+            adaptedSettings = adapted,
+            defaultSettings = defaults,
+            settingsNotes = notes.toList()
         )
     }
 
     private fun mapSlots(slots: List<FlpEffectSlot>): MappedModules {
-        val modules = mutableListOf<MobileEffectTemplate>()
+        val effects = mutableListOf<TranslatedMobileEffect>()
         val unsupported = linkedSetOf<String>()
         var disabledSkipped = 0
 
@@ -96,21 +118,21 @@ object FlmEffectAwareWriter {
                 continue
             }
 
-            val template = MobileEffectCatalog.findDesktopEquivalent(pluginName)
-            if (template == null) {
+            val translated = MobileEffectSettingsTranslator.translate(slot)
+            if (translated == null) {
                 unsupported += pluginName
             } else {
-                modules += template
+                effects += translated
             }
         }
 
-        return MappedModules(modules, disabledSkipped, unsupported)
+        return MappedModules(effects, disabledSkipped, unsupported)
     }
 
     private fun addEffectsToRack(
         rack: Chunk,
         rackIndex: Int,
-        effects: List<MobileEffectTemplate>
+        effects: List<TranslatedMobileEffect>
     ): Chunk {
         require(rack.payload.size >= 8) { "RACK FLM incompleto." }
         val prefix = rack.payload.copyOfRange(0, 8)
@@ -119,10 +141,10 @@ object FlmEffectAwareWriter {
         // Keep DirectWave and existing rack data intact. Use deterministic high
         // IDs, with a separate range for the master rack.
         val idBase = if (rackIndex < 0) 9_000 else 10_000 + rackIndex * 64
-        effects.forEachIndexed { effectIndex, template ->
+        effects.forEachIndexed { effectIndex, effect ->
             children += Chunk(
                 "RMOd",
-                template.collapsedPayload(idBase + effectIndex)
+                effect.payload(idBase + effectIndex)
             )
         }
 
