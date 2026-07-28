@@ -42,7 +42,7 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER
         }
         val subtitle = TextView(this).apply {
-            text = "Conversor experimental de projetos do FL Studio para FL Studio Mobile"
+            text = "Leitor de projetos do FL Studio e conversor para FL Studio Mobile"
             textSize = 16f
             gravity = Gravity.CENTER
             setPadding(0, 20, 0, 40)
@@ -52,9 +52,9 @@ class MainActivity : Activity() {
             setOnClickListener { chooseFlp() }
         }
         convertButton = Button(this).apply {
-            text = "Gerar .FLM experimental"
+            text = "Exportar diagnóstico da leitura"
             isEnabled = false
-            setOnClickListener { convert() }
+            setOnClickListener { exportDiagnostic() }
         }
         progress = ProgressBar(this).apply { visibility = View.GONE }
         status = TextView(this).apply {
@@ -63,7 +63,7 @@ class MainActivity : Activity() {
             setPadding(0, 36, 0, 24)
         }
         val warning = TextView(this).apply {
-            text = "Alpha 0.1.1: leitura segura do cabeçalho FLP. A serialização completa de notas, slide notes e canais DirectWave em um FLM compatível ainda está em desenvolvimento."
+            text = "Alpha 0.2: já lê canais, patterns, playlist, notas normais e slide notes diretamente do FLP. A próxima etapa usa um FLM vazio real como modelo para gerar canais DirectWave compatíveis."
             textSize = 13f
             setPadding(0, 36, 0, 0)
         }
@@ -88,20 +88,20 @@ class MainActivity : Activity() {
         startActivityForResult(intent, REQUEST_OPEN_FLP)
     }
 
-    private fun convert() {
+    private fun exportDiagnostic() {
         val project = selectedProject ?: return
-        setBusy(true, "Preparando arquivo experimental...")
+        setBusy(true, "Preparando diagnóstico...")
         try {
             pendingOutput = ExperimentalFlmWriter.write(project)
-            val base = selectedName?.substringBeforeLast('.') ?: "converted-project"
+            val base = selectedName?.substringBeforeLast('.') ?: "projeto"
             val saveIntent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
                 addCategory(Intent.CATEGORY_OPENABLE)
-                type = "application/octet-stream"
-                putExtra(Intent.EXTRA_TITLE, "$base.flm")
+                type = "text/plain"
+                putExtra(Intent.EXTRA_TITLE, "$base-flp-diagnostico.txt")
             }
-            startActivityForResult(saveIntent, REQUEST_SAVE_FLM)
+            startActivityForResult(saveIntent, REQUEST_SAVE_DIAGNOSTIC)
         } catch (t: Throwable) {
-            showError("Falha ao preparar a saída", t)
+            showError("Falha ao preparar o diagnóstico", t)
         } finally {
             setBusy(false)
         }
@@ -125,21 +125,21 @@ class MainActivity : Activity() {
                 }
                 loadFlp(uri)
             }
-            REQUEST_SAVE_FLM -> data?.data?.let(::saveFlm)
+            REQUEST_SAVE_DIAGNOSTIC -> data?.data?.let(::saveDiagnostic)
         }
     }
 
     private fun loadFlp(uri: Uri) {
         selectedProject = null
         convertButton.isEnabled = false
-        setBusy(true, "Lendo cabeçalho do projeto...")
+        setBusy(true, "Lendo eventos, patterns e piano rolls...")
 
         Thread {
             try {
                 val name = queryName(uri) ?: uri.lastPathSegment ?: "Projeto FLP"
                 val size = querySize(uri)
                 val project = contentResolver.openInputStream(uri)?.use { stream ->
-                    FlpInspector.inspect(stream, size)
+                    FlpParser.parse(stream, size)
                 } ?: throw IOException("Não foi possível abrir o arquivo.")
 
                 runOnUiThread {
@@ -148,9 +148,15 @@ class MainActivity : Activity() {
                     selectedProject = project
                     status.text = buildString {
                         append(name)
-                        append("\nFormato ").append(project.format)
-                        append(", ").append(project.channels).append(" canal(is)")
-                        append(", PPQ ").append(project.ppq)
+                        append("\nFL Studio: ").append(project.flVersion ?: "versão não identificada")
+                        append("\nTempo: ").append(formatTempo(project.tempo)).append(" BPM")
+                        append(" • PPQ ").append(project.ppq)
+                        append("\nCanais encontrados: ").append(project.channels.size)
+                        append(" • canais de saída: ").append(project.outputChannelCount)
+                        append("\nPatterns: ").append(project.patterns.size)
+                        append(" • clips na playlist: ").append(project.playlist.size)
+                        append("\nNotas: ").append(project.noteCount)
+                        append(" • slide notes: ").append(project.slideNoteCount)
                         if (project.sourceSize >= 0L) {
                             append("\nTamanho: ").append(formatSize(project.sourceSize))
                         }
@@ -164,20 +170,20 @@ class MainActivity : Activity() {
                     selectedName = null
                     selectedProject = null
                     convertButton.isEnabled = false
-                    showError("Não foi possível ler o FLP", t)
+                    showError("Não foi possível analisar o FLP", t)
                     setBusy(false)
                 }
             }
         }.start()
     }
 
-    private fun saveFlm(uri: Uri) {
+    private fun saveDiagnostic(uri: Uri) {
         try {
-            val output = pendingOutput ?: throw IOException("Nenhum resultado disponível.")
+            val output = pendingOutput ?: throw IOException("Nenhum diagnóstico disponível.")
             contentResolver.openOutputStream(uri, "w")?.use { it.write(output) }
                 ?: throw IOException("Não foi possível salvar o arquivo.")
-            status.text = "Arquivo experimental salvo."
-            Toast.makeText(this, "FLM experimental salvo", Toast.LENGTH_LONG).show()
+            status.text = "Diagnóstico salvo. O FLP foi analisado sem passar por MIDI."
+            Toast.makeText(this, "Diagnóstico salvo", Toast.LENGTH_LONG).show()
         } catch (t: Throwable) {
             showError("Erro ao salvar", t)
         } finally {
@@ -218,6 +224,9 @@ class MainActivity : Activity() {
         Toast.makeText(this, "$prefix: $detail", Toast.LENGTH_LONG).show()
     }
 
+    private fun formatTempo(tempo: Double): String =
+        if (tempo % 1.0 == 0.0) tempo.toInt().toString() else String.format("%.3f", tempo)
+
     private fun formatSize(bytes: Long): String {
         if (bytes < 1_024L) return "$bytes B"
         val kb = bytes / 1_024.0
@@ -228,6 +237,6 @@ class MainActivity : Activity() {
 
     companion object {
         private const val REQUEST_OPEN_FLP = 1001
-        private const val REQUEST_SAVE_FLM = 1002
+        private const val REQUEST_SAVE_DIAGNOSTIC = 1002
     }
 }
