@@ -11,8 +11,8 @@ android {
         applicationId = "com.vitkkk.flptoflm"
         minSdk = 26
         targetSdk = 35
-        versionCode = 11
-        versionName = "0.3.7-alpha"
+        versionCode = 12
+        versionName = "0.4.0-alpha"
     }
 
     buildFeatures {
