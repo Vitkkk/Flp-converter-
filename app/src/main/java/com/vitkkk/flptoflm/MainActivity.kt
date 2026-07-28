@@ -42,7 +42,7 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER
         }
         val subtitle = TextView(this).apply {
-            text = "Leitor de projetos do FL Studio e conversor para FL Studio Mobile"
+            text = "Converte melodias do FL Studio para canais DirectWave no FL Studio Mobile"
             textSize = 16f
             gravity = Gravity.CENTER
             setPadding(0, 20, 0, 40)
@@ -52,9 +52,9 @@ class MainActivity : Activity() {
             setOnClickListener { chooseFlp() }
         }
         convertButton = Button(this).apply {
-            text = "Exportar diagnóstico da leitura"
+            text = "Gerar projeto .FLM"
             isEnabled = false
-            setOnClickListener { exportDiagnostic() }
+            setOnClickListener { convertToFlm() }
         }
         progress = ProgressBar(this).apply { visibility = View.GONE }
         status = TextView(this).apply {
@@ -63,7 +63,7 @@ class MainActivity : Activity() {
             setPadding(0, 36, 0, 24)
         }
         val warning = TextView(this).apply {
-            text = "Alpha 0.2: já lê canais, patterns, playlist, notas normais e slide notes diretamente do FLP. A próxima etapa usa um FLM vazio real como modelo para gerar canais DirectWave compatíveis."
+            text = "Alpha 0.3: cada canal do FLP vira um DirectWave vazio, sem DWP e sem efeitos. Notas, posições, durações, velocity, pan, fine pitch e slide notes são escritas em EVN2."
             textSize = 13f
             setPadding(0, 36, 0, 0)
         }
@@ -88,23 +88,33 @@ class MainActivity : Activity() {
         startActivityForResult(intent, REQUEST_OPEN_FLP)
     }
 
-    private fun exportDiagnostic() {
+    private fun convertToFlm() {
         val project = selectedProject ?: return
-        setBusy(true, "Preparando diagnóstico...")
-        try {
-            pendingOutput = ExperimentalFlmWriter.write(project)
-            val base = selectedName?.substringBeforeLast('.') ?: "projeto"
-            val saveIntent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
-                addCategory(Intent.CATEGORY_OPENABLE)
-                type = "text/plain"
-                putExtra(Intent.EXTRA_TITLE, "$base-flp-diagnostico.txt")
+        setBusy(true, "Criando canais DirectWave e convertendo notas...")
+
+        Thread {
+            try {
+                val base = selectedName?.substringBeforeLast('.') ?: "projeto-convertido"
+                val output = FlmWriter.write(project, base)
+                runOnUiThread {
+                    if (isFinishing || isDestroyed) return@runOnUiThread
+                    pendingOutput = output
+                    setBusy(false)
+                    val saveIntent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                        addCategory(Intent.CATEGORY_OPENABLE)
+                        type = "application/octet-stream"
+                        putExtra(Intent.EXTRA_TITLE, "$base.flm")
+                    }
+                    startActivityForResult(saveIntent, REQUEST_SAVE_FLM)
+                }
+            } catch (t: Throwable) {
+                runOnUiThread {
+                    if (isFinishing || isDestroyed) return@runOnUiThread
+                    setBusy(false)
+                    showError("Falha na conversão", t)
+                }
             }
-            startActivityForResult(saveIntent, REQUEST_SAVE_DIAGNOSTIC)
-        } catch (t: Throwable) {
-            showError("Falha ao preparar o diagnóstico", t)
-        } finally {
-            setBusy(false)
-        }
+        }.start()
     }
 
     @Deprecated("Deprecated in Android API; retained for minSdk compatibility")
@@ -125,7 +135,7 @@ class MainActivity : Activity() {
                 }
                 loadFlp(uri)
             }
-            REQUEST_SAVE_DIAGNOSTIC -> data?.data?.let(::saveDiagnostic)
+            REQUEST_SAVE_FLM -> data?.data?.let(::saveFlm)
         }
     }
 
@@ -151,8 +161,7 @@ class MainActivity : Activity() {
                         append("\nFL Studio: ").append(project.flVersion ?: "versão não identificada")
                         append("\nTempo: ").append(formatTempo(project.tempo)).append(" BPM")
                         append(" • PPQ ").append(project.ppq)
-                        append("\nCanais encontrados: ").append(project.channels.size)
-                        append(" • canais de saída: ").append(project.outputChannelCount)
+                        append("\nCanais DirectWave: ").append(project.outputChannelCount)
                         append("\nPatterns: ").append(project.patterns.size)
                         append(" • clips na playlist: ").append(project.playlist.size)
                         append("\nNotas: ").append(project.noteCount)
@@ -177,13 +186,13 @@ class MainActivity : Activity() {
         }.start()
     }
 
-    private fun saveDiagnostic(uri: Uri) {
+    private fun saveFlm(uri: Uri) {
         try {
-            val output = pendingOutput ?: throw IOException("Nenhum diagnóstico disponível.")
+            val output = pendingOutput ?: throw IOException("Nenhum projeto convertido disponível.")
             contentResolver.openOutputStream(uri, "w")?.use { it.write(output) }
                 ?: throw IOException("Não foi possível salvar o arquivo.")
-            status.text = "Diagnóstico salvo. O FLP foi analisado sem passar por MIDI."
-            Toast.makeText(this, "Diagnóstico salvo", Toast.LENGTH_LONG).show()
+            status.text = "Projeto FLM salvo. Importe ou abra o arquivo no FL Studio Mobile."
+            Toast.makeText(this, "FLM salvo", Toast.LENGTH_LONG).show()
         } catch (t: Throwable) {
             showError("Erro ao salvar", t)
         } finally {
@@ -237,6 +246,6 @@ class MainActivity : Activity() {
 
     companion object {
         private const val REQUEST_OPEN_FLP = 1001
-        private const val REQUEST_SAVE_DIAGNOSTIC = 1002
+        private const val REQUEST_SAVE_FLM = 1002
     }
 }
