@@ -133,16 +133,14 @@ internal object MobileEffectAudioSafety {
             "Waveshaper" -> cap(5, 0.42f, 0.65f)
         }
 
-        // FLP slot mix and Mobile SMPR do not share a proven identical curve.
-        // Values near zero were being multiplied through long chains, making a
-        // few voices tens of decibels quieter. Keep custom mixes audible while
-        // the module's own dry/wet parameters preserve the effect character.
-        if (safeSlotMix != null) {
-            val audibleMix = safeSlotMix.coerceIn(0.78f, 1f)
-            if (audibleMix != safeSlotMix) {
-                safeSlotMix = audibleMix
-                changed = true
-            }
+        // The FLP slot-mix curve is not equivalent to Mobile SMPR. Treating it
+        // as a serial module gain multiplies attenuation through the rack: even
+        // 0.78 across five effects leaves only about 29% of the signal. Keep each
+        // enabled module at unity here and preserve effect amount through its own
+        // dry/wet, mix and feedback controls instead.
+        if (safeSlotMix != null && safeSlotMix != 1f) {
+            safeSlotMix = 1f
+            changed = true
         }
 
         return if (changed || safeSlotMix != translated.slotMix) {
@@ -155,7 +153,7 @@ internal object MobileEffectAudioSafety {
                     EffectSettingsQuality.ADAPTED
                 },
                 description = translated.description +
-                    "; proteção contra clipping, feedback e perda excessiva de volume"
+                    "; proteção contra clipping, feedback e perda acumulada de volume"
             )
         } else {
             translated
