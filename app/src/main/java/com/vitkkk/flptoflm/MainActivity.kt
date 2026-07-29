@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import android.view.Gravity
 import android.view.View
@@ -22,10 +23,22 @@ class MainActivity : Activity() {
     private lateinit var convertButton: Button
     private lateinit var progress: ProgressBar
 
+    private data class PendingFlmPart(
+        val fileName: String,
+        val bytes: ByteArray,
+        val bpm: Double,
+        val startTick: Long,
+        val endTick: Long,
+        val summary: String
+    )
+
     private var selectedName: String? = null
     private var selectedProject: FlpProject? = null
     private var selectedMixer: FlpMixerScan = FlpMixerScan.EMPTY
+    private var selectedTempoScan: FlpTempoScan = FlpTempoScan.EMPTY
     private var pendingOutput: ByteArray? = null
+    private var pendingParts: List<PendingFlmPart> = emptyList()
+    private var pendingFolderName: String = "FLM BPM Change"
     private var pendingSummary: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -50,7 +63,7 @@ class MainActivity : Activity() {
             setPadding(0, 6, 0, 0)
         }
         val subtitle = TextView(this).apply {
-            text = "Converte melodias, slide notes e efeitos para o FL Studio Mobile"
+            text = "Converte melodias, slide notes, efeitos e BPM Change para o FL Studio Mobile"
             textSize = 16f
             gravity = Gravity.CENTER
             setPadding(0, 20, 0, 40)
@@ -71,7 +84,7 @@ class MainActivity : Activity() {
             setPadding(0, 36, 0, 24)
         }
         val warning = TextView(this).apply {
-            text = "Cada canal do FLP vira um DirectWave vazio. Efeitos nativos compatíveis são adicionados na ordem dos slots, minimizados e recebem os parâmetros do FLP. Quando os módulos possuem controles diferentes, a configuração é adaptada para manter o resultado sonoro mais próximo."
+            text = "Cada canal do FLP vira um DirectWave vazio. Efeitos compatíveis são traduzidos e minimizados. Quando existe automação de tempo, o app separa a música em vários FLM: cada parte começa no zero, usa seu BPM correto e mantém notas, slides e efeitos."
             textSize = 13f
             setPadding(0, 36, 0, 0)
         }
@@ -100,41 +113,67 @@ class MainActivity : Activity() {
     private fun convertToFlm() {
         val project = selectedProject ?: return
         val mixer = selectedMixer
-        setBusy(true, "Criando DirectWave e traduzindo notas, slides e settings dos efeitos...")
+        val tempoScan = selectedTempoScan
+        setBusy(true, "Criando partes, DirectWave, notas, slides e efeitos...")
 
         Thread {
             try {
-                val base = selectedName?.substringBeforeLast('.') ?: "projeto-convertido"
-                val result = FlmEffectAwareWriter.write(project, base, mixer)
+                val base = sanitizeName(selectedName?.substringBeforeLast('.') ?: "projeto-convertido")
+                val segments = FlpTempoSegmenter.split(project, tempoScan)
+                val parts = segments.map { segment ->
+                    val partBase = if (segments.size == 1) {
+                        base
+                    } else {
+                        "$base - Parte ${segment.index.toString().padStart(2, '0')} - ${formatTempo(segment.bpm)} BPM"
+                    }
+                    val result = FlmEffectAwareWriter.write(segment.project, partBase, mixer)
+                    PendingFlmPart(
+                        fileName = "$partBase.flm",
+                        bytes = result.bytes,
+                        bpm = segment.bpm,
+                        startTick = segment.startTick,
+                        endTick = segment.endTick,
+                        summary = effectSummary(result)
+                    )
+                }
+
                 runOnUiThread {
                     if (isFinishing || isDestroyed) return@runOnUiThread
-                    pendingOutput = result.bytes
-                    pendingSummary = buildString {
-                        append("Efeitos adicionados: ").append(result.addedEffects)
-                        append("\nSettings diretos: ").append(result.directSettings)
-                        append(" • adaptados: ").append(result.adaptedSettings)
-                        if (result.defaultSettings > 0) {
-                            append(" • padrão: ").append(result.defaultSettings)
-                        }
-                        if (result.disabledEffectsSkipped > 0) {
-                            append("\nDesligados ignorados: ").append(result.disabledEffectsSkipped)
-                        }
-                        if (result.unsupportedEffects.isNotEmpty()) {
-                            append("\nSem equivalente: ")
-                            append(result.unsupportedEffects.joinToString(", "))
-                        }
-                        if (result.settingsNotes.isNotEmpty()) {
-                            append("\n\nTraduções:\n")
-                            append(result.settingsNotes.joinToString("\n") { "• $it" })
-                        }
-                    }
                     setBusy(false)
-                    val saveIntent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
-                        addCategory(Intent.CATEGORY_OPENABLE)
-                        type = "application/octet-stream"
-                        putExtra(Intent.EXTRA_TITLE, "$base.flm")
+
+                    if (parts.size == 1) {
+                        val part = parts.first()
+                        pendingOutput = part.bytes
+                        pendingParts = emptyList()
+                        pendingSummary = part.summary
+                        val saveIntent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                            addCategory(Intent.CATEGORY_OPENABLE)
+                            type = "application/octet-stream"
+                            putExtra(Intent.EXTRA_TITLE, part.fileName)
+                        }
+                        startActivityForResult(saveIntent, REQUEST_SAVE_FLM)
+                    } else {
+                        pendingOutput = null
+                        pendingParts = parts
+                        pendingFolderName = "$base - BPM Change"
+                        pendingSummary = buildString {
+                            append(parts.size).append(" partes de BPM geradas:\n")
+                            parts.forEach { part ->
+                                append("• ").append(part.fileName)
+                                    .append(" — ").append(formatTempo(part.bpm)).append(" BPM\n")
+                            }
+                            append("\n").append(parts.first().summary)
+                        }
+                        val folderIntent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+                            addFlags(
+                                Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                                    Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+                                    Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or
+                                    Intent.FLAG_GRANT_PREFIX_URI_PERMISSION
+                            )
+                        }
+                        startActivityForResult(folderIntent, REQUEST_SAVE_FLM_FOLDER)
                     }
-                    startActivityForResult(saveIntent, REQUEST_SAVE_FLM)
                 }
             } catch (t: Throwable) {
                 runOnUiThread {
@@ -165,14 +204,25 @@ class MainActivity : Activity() {
                 loadFlp(uri)
             }
             REQUEST_SAVE_FLM -> data?.data?.let(::saveFlm)
+            REQUEST_SAVE_FLM_FOLDER -> data?.data?.let { treeUri ->
+                val grantedFlags = data.flags and
+                    (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+                try {
+                    contentResolver.takePersistableUriPermission(treeUri, grantedFlags)
+                } catch (_: Exception) {
+                    // Temporary access is enough for this export.
+                }
+                saveFlmParts(treeUri)
+            }
         }
     }
 
     private fun loadFlp(uri: Uri) {
         selectedProject = null
         selectedMixer = FlpMixerScan.EMPTY
+        selectedTempoScan = FlpTempoScan.EMPTY
         convertButton.isEnabled = false
-        setBusy(true, "Lendo patterns, piano rolls, Mixer, efeitos e presets...")
+        setBusy(true, "Lendo patterns, Mixer, efeitos e automação de BPM...")
 
         Thread {
             try {
@@ -186,8 +236,15 @@ class MainActivity : Activity() {
                     contentResolver.openInputStream(uri)?.use(FlpMixerScanner::scan)
                         ?: FlpMixerScan.EMPTY
                 } catch (_: Throwable) {
-                    // Notes remain convertible even when a new FLP version changes Mixer events.
                     FlpMixerScan.EMPTY
+                }
+
+                val tempoScan = try {
+                    contentResolver.openInputStream(uri)?.use { stream ->
+                        FlpTempoAutomationScanner.scan(stream, project.tempo)
+                    } ?: FlpTempoScan.EMPTY
+                } catch (_: Throwable) {
+                    FlpTempoScan(listOf(FlpTempoChange(0L, project.tempo)), 0, false)
                 }
 
                 runOnUiThread {
@@ -195,10 +252,12 @@ class MainActivity : Activity() {
                     selectedName = name
                     selectedProject = project
                     selectedMixer = mixer
+                    selectedTempoScan = tempoScan
+                    val partCount = if (tempoScan.hasChanges) tempoScan.changes.size else 1
                     status.text = buildString {
                         append(name)
                         append("\nFL Studio: ").append(project.flVersion ?: "versão não identificada")
-                        append("\nTempo: ").append(formatTempo(project.tempo)).append(" BPM")
+                        append("\nTempo inicial: ").append(formatTempo(project.tempo)).append(" BPM")
                         append(" • PPQ ").append(project.ppq)
                         append("\nCanais DirectWave: ").append(project.outputChannelCount)
                         append("\nPatterns: ").append(project.patterns.size)
@@ -211,6 +270,15 @@ class MainActivity : Activity() {
                             effect.pluginData?.isNotEmpty() == true
                         }
                         append(" • com settings: ").append(states)
+                        if (tempoScan.hasChanges) {
+                            append("\nBPM Change detectado: ").append(tempoScan.changes.size - 1)
+                            append(" troca(s) • exportação em ").append(partCount).append(" FLMs")
+                            append("\nBPMs: ")
+                            append(tempoScan.changes.joinToString(" → ") { formatTempo(it.bpm) })
+                            if (tempoScan.customRangeDetected) append(" • Min/Max personalizado detectado")
+                        } else {
+                            append("\nBPM Change: não detectado")
+                        }
                         if (mixer.unsupportedEffects.isNotEmpty()) {
                             append("\nSem equivalente: ")
                             append(
@@ -233,6 +301,7 @@ class MainActivity : Activity() {
                     selectedName = null
                     selectedProject = null
                     selectedMixer = FlpMixerScan.EMPTY
+                    selectedTempoScan = FlpTempoScan.EMPTY
                     convertButton.isEnabled = false
                     showError("Não foi possível analisar o FLP", t)
                     setBusy(false)
@@ -259,12 +328,73 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun saveFlmParts(treeUri: Uri) {
+        val parts = pendingParts
+        if (parts.isEmpty()) return
+        setBusy(true, "Criando pasta e salvando ${parts.size} partes...")
+
+        Thread {
+            try {
+                val rootId = DocumentsContract.getTreeDocumentId(treeUri)
+                val rootDocument = DocumentsContract.buildDocumentUriUsingTree(treeUri, rootId)
+                val folder = DocumentsContract.createDocument(
+                    contentResolver,
+                    rootDocument,
+                    DocumentsContract.Document.MIME_TYPE_DIR,
+                    pendingFolderName
+                ) ?: rootDocument
+
+                for (part in parts) {
+                    val document = DocumentsContract.createDocument(
+                        contentResolver,
+                        folder,
+                        "application/octet-stream",
+                        part.fileName
+                    ) ?: throw IOException("Não foi possível criar ${part.fileName}.")
+                    contentResolver.openOutputStream(document, "w")?.use { stream ->
+                        stream.write(part.bytes)
+                    } ?: throw IOException("Não foi possível salvar ${part.fileName}.")
+                }
+
+                runOnUiThread {
+                    if (isFinishing || isDestroyed) return@runOnUiThread
+                    setBusy(false)
+                    status.text = buildString {
+                        append(parts.size).append(" projetos FLM salvos na pasta ")
+                            .append(pendingFolderName).append(".\n")
+                        pendingSummary?.let(::append)
+                    }
+                    Toast.makeText(this, "${parts.size} partes FLM salvas", Toast.LENGTH_LONG).show()
+                    pendingParts = emptyList()
+                    pendingSummary = null
+                }
+            } catch (t: Throwable) {
+                runOnUiThread {
+                    if (isFinishing || isDestroyed) return@runOnUiThread
+                    setBusy(false)
+                    showError("Erro ao salvar as partes", t)
+                }
+            }
+        }.start()
+    }
+
+    private fun effectSummary(result: FlmEffectWriteResult): String = buildString {
+        append("Efeitos adicionados: ").append(result.addedEffects)
+        append("\nSettings diretos: ").append(result.directSettings)
+        append(" • adaptados: ").append(result.adaptedSettings)
+        if (result.defaultSettings > 0) append(" • padrão: ").append(result.defaultSettings)
+        if (result.disabledEffectsPreserved > 0) {
+            append("\nDesligados preservados: ").append(result.disabledEffectsPreserved)
+        }
+        if (result.unsupportedEffects.isNotEmpty()) {
+            append("\nSem equivalente: ").append(result.unsupportedEffects.joinToString(", "))
+        }
+    }
+
     private fun queryName(uri: Uri): String? {
         contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
             val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-            if (index >= 0 && cursor.moveToFirst() && !cursor.isNull(index)) {
-                return cursor.getString(index)
-            }
+            if (index >= 0 && cursor.moveToFirst() && !cursor.isNull(index)) return cursor.getString(index)
         }
         return null
     }
@@ -272,9 +402,7 @@ class MainActivity : Activity() {
     private fun querySize(uri: Uri): Long {
         contentResolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use { cursor ->
             val index = cursor.getColumnIndex(OpenableColumns.SIZE)
-            if (index >= 0 && cursor.moveToFirst() && !cursor.isNull(index)) {
-                return cursor.getLong(index)
-            }
+            if (index >= 0 && cursor.moveToFirst() && !cursor.isNull(index)) return cursor.getLong(index)
         }
         return -1L
     }
@@ -292,6 +420,9 @@ class MainActivity : Activity() {
         Toast.makeText(this, "$prefix: $detail", Toast.LENGTH_LONG).show()
     }
 
+    private fun sanitizeName(value: String): String =
+        value.replace(Regex("[\\/:*?\"<>|]"), "_").trim().ifBlank { "projeto-convertido" }
+
     private fun formatTempo(tempo: Double): String =
         if (tempo % 1.0 == 0.0) tempo.toInt().toString() else String.format("%.3f", tempo)
 
@@ -299,12 +430,12 @@ class MainActivity : Activity() {
         if (bytes < 1_024L) return "$bytes B"
         val kb = bytes / 1_024.0
         if (kb < 1_024.0) return String.format("%.1f KB", kb)
-        val mb = kb / 1_024.0
-        return String.format("%.1f MB", mb)
+        return String.format("%.1f MB", kb / 1_024.0)
     }
 
     companion object {
         private const val REQUEST_OPEN_FLP = 1001
         private const val REQUEST_SAVE_FLM = 1002
+        private const val REQUEST_SAVE_FLM_FOLDER = 1003
     }
 }
