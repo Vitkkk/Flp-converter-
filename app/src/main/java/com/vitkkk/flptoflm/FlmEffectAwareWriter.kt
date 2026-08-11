@@ -17,13 +17,8 @@ data class FlmEffectWriteResult(
 )
 
 /**
- * Adds compatible FL Studio Mobile modules after the generated DirectWave and
- * translates native Fruity plugin states into Mobile PRMS/SMPR values.
- *
- * Master effects are inserted once in the Mobile master rack. Effects from a
- * numbered FL Studio Mixer insert are cloned only into channels routed to that
- * insert. Disabled slots remain present and are written with the Mobile module
- * bypassed, preserving the source project's on/off state.
+ * Adds compatible FL Studio Mobile modules after generated DirectWave or Audio
+ * channels and translates native Fruity plugin states into Mobile PRMS/SMPR.
  */
 object FlmEffectAwareWriter {
     private data class Chunk(val type: String, val payload: ByteArray)
@@ -39,12 +34,25 @@ object FlmEffectAwareWriter {
         val unsupported: Set<String>
     )
 
+    /** Backward-compatible entry point used by older builds/tests. */
     fun write(
         project: FlpProject,
         projectName: String,
         mixer: FlpMixerScan
+    ): FlmEffectWriteResult =
+        writeFromBase(FlmWriter.write(project, projectName), project, mixer)
+
+    /**
+     * Applies effect racks to an already-created FLM. This lets the pipeline
+     * restore ZIP Audio Clips first and then append the FLP mixer chain to those
+     * real Audio racks instead of losing the effects when a placeholder rack is
+     * replaced afterwards.
+     */
+    fun writeFromBase(
+        baseProject: ByteArray,
+        project: FlpProject,
+        mixer: FlpMixerScan
     ): FlmEffectWriteResult {
-        val baseProject = FlmWriter.write(project, projectName)
         val top = parseTopLevel(baseProject)
 
         var rackOrdinal = 0
@@ -146,8 +154,8 @@ object FlmEffectAwareWriter {
         val prefix = rack.payload.copyOfRange(0, 8)
         val children = parseChunks(rack.payload, 8, rack.payload.size).toMutableList()
 
-        // Keep DirectWave and existing rack data intact. Use deterministic high
-        // IDs, with a separate range for the master rack.
+        // Works for both DirectWave racks and the empty Audio rack. Existing rack
+        // data stays intact; effect modules are simply appended below it.
         val idBase = if (rackIndex < 0) 9_000 else 10_000 + rackIndex * 64
         effects.forEachIndexed { effectIndex, effect ->
             children += Chunk(
