@@ -66,8 +66,10 @@ object ZipFlpBundleReader {
 
     fun resolveAudio(scan: FlpAudioScan, entries: List<ZipMediaEntry>): List<ResolvedZipAudio> {
         if (entries.isEmpty() || scan.usedChannels.isEmpty()) return emptyList()
+
         val resolved = mutableListOf<ResolvedZipAudio>()
         val usedOutputPaths = hashSetOf<String>()
+        val outputPathBySourceEntry = mutableMapOf<String, String>()
 
         for (channel in scan.usedChannels) {
             val source = normalizePath(channel.samplePath)
@@ -78,15 +80,25 @@ object ZipFlpBundleReader {
                 .maxByOrNull { it.second }
                 ?.first ?: continue
 
-            var outputPath = when {
-                match.normalizedName.startsWith("My Samples/", ignoreCase = true) -> match.normalizedName
-                else -> "My Samples/${match.fileName}"
-            }
-            if (!usedOutputPaths.add(outputPath.lowercase(Locale.ROOT))) {
-                val stem = match.fileName.substringBeforeLast('.', match.fileName)
-                val ext = match.fileName.substringAfterLast('.', "")
-                outputPath = "My Samples/${stem}_${channel.iid}${if (ext.isNotEmpty()) ".$ext" else ""}"
-                usedOutputPaths += outputPath.lowercase(Locale.ROOT)
+            val sourceKey = match.normalizedName.lowercase(Locale.ROOT)
+            val outputPath = outputPathBySourceEntry[sourceKey] ?: run {
+                var candidate = when {
+                    match.normalizedName.startsWith("My Samples/", ignoreCase = true) -> match.normalizedName
+                    else -> "My Samples/${match.fileName}"
+                }
+
+                if (!usedOutputPaths.add(candidate.lowercase(Locale.ROOT))) {
+                    val stem = match.fileName.substringBeforeLast('.', match.fileName)
+                    val ext = match.fileName.substringAfterLast('.', "")
+                    var suffix = 2
+                    do {
+                        candidate = "My Samples/${stem}_$suffix${if (ext.isNotEmpty()) ".$ext" else ""}"
+                        suffix++
+                    } while (!usedOutputPaths.add(candidate.lowercase(Locale.ROOT)))
+                }
+
+                outputPathBySourceEntry[sourceKey] = candidate
+                candidate
             }
 
             resolved += ResolvedZipAudio(
