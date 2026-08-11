@@ -15,8 +15,8 @@ data class FlmAudioWriteResult(
 
 /**
  * Replaces the placeholder DirectWave generated for an FLP Audio Clip channel
- * with a real FL Studio Mobile Audio channel. The channel/track template comes
- * from audio.zip and is patched with the source FLP timeline plus ZIP media path.
+ * with a real FL Studio Mobile Audio channel while retaining compatible FX that
+ * were already appended to the placeholder rack.
  */
 object FlmAudioWriter {
     private data class Chunk(val type: String, val payload: ByteArray)
@@ -52,8 +52,6 @@ object FlmAudioWriter {
                 continue
             }
 
-            // RACK/CHNL ordinal zero is Master. FlmWriter creates one placeholder
-            // generator for every FLP channel, so Audio Clip channel N is N + 1.
             val rackSlot = rackPositions.getOrNull(projectChannelIndex + 1)
             val channelSlot = channelPositions.getOrNull(projectChannelIndex + 1)
             val asset = assets[audioChannel.iid]
@@ -66,7 +64,10 @@ object FlmAudioWriter {
                 continue
             }
 
-            top[rackSlot] = audioRackTemplate
+            top[rackSlot] = buildAudioRack(
+                audioTemplate = audioRackTemplate,
+                generatedRack = top[rackSlot]
+            )
             top[channelSlot] = buildAudioChannel(
                 template = audioChannelTemplate,
                 channelIndex = projectChannelIndex,
@@ -88,6 +89,26 @@ object FlmAudioWriter {
             usedAssets = used.distinctBy { it.sourceEntryName },
             missingSamplePaths = missing.toList()
         )
+    }
+
+    /**
+     * Audio racks do not contain a generator module. When the FX option is on,
+     * FlmEffectAwareWriter has already appended effect RMOd chunks to the
+     * DirectWave placeholder. Copy every non-DirectWave module to the real audio
+     * rack so the Audio Clip keeps its insert chain.
+     */
+    private fun buildAudioRack(audioTemplate: Chunk, generatedRack: Chunk): Chunk {
+        require(audioTemplate.payload.size >= 8 && generatedRack.payload.size >= 8)
+        val prefix = audioTemplate.payload.copyOfRange(0, 8)
+        val baseChildren = parseChunks(audioTemplate.payload, 8, audioTemplate.payload.size).toMutableList()
+        val generatedChildren = parseChunks(generatedRack.payload, 8, generatedRack.payload.size)
+
+        for (child in generatedChildren) {
+            if (child.type != "RMOd" && child.type != "RMOD") continue
+            val moduleType = if (child.payload.size >= 4) getInt(child.payload, 0) else 1
+            if (moduleType != 1) baseChildren += child
+        }
+        return Chunk("RACK", concat(prefix, encodeChunks(baseChildren)))
     }
 
     private fun buildAudioChannel(
@@ -152,14 +173,8 @@ object FlmAudioWriter {
             }
         }
 
-        placements.forEachIndexed { index, placement ->
-            output += buildAudioClip(
-                clipTemplate,
-                placement,
-                relativePath,
-                sourcePpq,
-                index
-            )
+        placements.forEach { placement ->
+            output += buildAudioClip(clipTemplate, placement, relativePath, sourcePpq)
         }
         return Chunk("TRKH", encodeChunks(output))
     }
@@ -168,17 +183,15 @@ object FlmAudioWriter {
         source: Chunk,
         placement: FlpAudioPlacement,
         relativePath: String,
-        sourcePpq: Int,
-        ordinal: Int
+        sourcePpq: Int
     ): Chunk {
         require(source.payload.size >= 8) { "CLIP de áudio incompleto." }
         val ppq = sourcePpq.coerceAtLeast(1).toDouble()
         val prefix = source.payload.copyOfRange(0, 8)
 
-        // Mobile stores the absolute Playlist position in 1/256 beat units.
         val position256 = (placement.position.toDouble() / ppq * 256.0)
             .roundToInt().coerceAtLeast(0)
-        putInt(prefix, 0, position256 + ordinal.coerceAtMost(0))
+        putInt(prefix, 0, position256)
 
         val children = parseChunks(source.payload, 8, source.payload.size).map { child ->
             when (child.type) {
@@ -241,9 +254,7 @@ object FlmAudioWriter {
 
     private fun parseStandaloneChunk(bytes: ByteArray, expected: String): Chunk {
         val chunks = parseChunks(bytes, 0, bytes.size)
-        require(chunks.size == 1 && chunks.first().type == expected) {
-            "Modelo $expected inválido."
-        }
+        require(chunks.size == 1 && chunks.first().type == expected) { "Modelo $expected inválido." }
         return chunks.first()
     }
 
