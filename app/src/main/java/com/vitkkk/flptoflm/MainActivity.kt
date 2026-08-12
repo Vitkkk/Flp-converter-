@@ -35,6 +35,7 @@ class MainActivity : Activity() {
     private lateinit var progress: ProgressBar
     private lateinit var effectsSwitch: Switch
     private lateinit var bpmSwitch: Switch
+    private lateinit var audioSwitch: Switch
     private lateinit var sourceBadge: TextView
 
     private data class PendingFlmPart(
@@ -67,7 +68,7 @@ class MainActivity : Activity() {
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(22), dp(34), dp(22), dp(36))
+            setPadding(dp(22), dp(30), dp(22), dp(36))
         }
         val scroll = ScrollView(this).apply {
             setBackgroundColor(COLOR_BG)
@@ -76,28 +77,29 @@ class MainActivity : Activity() {
         }
 
         val eyebrow = TextView(this).apply {
-            text = "FL STUDIO → MOBILE"
-            textSize = 12f
+            text = "FL STUDIO  →  MOBILE"
+            textSize = 11f
             setTextColor(COLOR_ACCENT)
             typeface = Typeface.DEFAULT_BOLD
-            letterSpacing = 0.14f
+            letterSpacing = 0.16f
         }
         val title = TextView(this).apply {
             text = "FLP  →  FLM"
-            textSize = 34f
+            textSize = 36f
             setTextColor(Color.WHITE)
             typeface = Typeface.DEFAULT_BOLD
-            setPadding(0, dp(5), 0, 0)
+            setPadding(0, dp(4), 0, 0)
         }
         val subtitle = TextView(this).apply {
-            text = "Notas, slide notes e canais prontos para continuar o projeto no celular."
-            textSize = 15f
+            text = "Leve notes, slide notes, mídia e opções do projeto para o FL Studio Mobile."
+            textSize = 14f
             setTextColor(COLOR_MUTED)
+            setLineSpacing(0f, 1.12f)
             setPadding(0, dp(8), 0, dp(5))
         }
         val version = TextView(this).apply {
-            text = "v${BuildConfig.VERSION_NAME}"
-            textSize = 12f
+            text = "v${BuildConfig.VERSION_NAME}  •  alpha"
+            textSize = 11f
             setTextColor(COLOR_DIM)
         }
 
@@ -106,17 +108,33 @@ class MainActivity : Activity() {
         root.addView(subtitle)
         root.addView(version)
 
+        val defaultCard = card(COLOR_CARD_SOFT).apply {
+            setPadding(dp(16), dp(14), dp(16), dp(14))
+        }
+        val defaultHeader = TextView(this).apply {
+            text = "PADRÃO"
+            textSize = 11f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(COLOR_ACCENT)
+            letterSpacing = 0.12f
+        }
+        val defaultText = TextView(this).apply {
+            text = "1 FLM • DirectWave vazio • notes + slide notes • sem FX • sem divisão de BPM"
+            textSize = 13f
+            setTextColor(COLOR_TEXT)
+            setPadding(0, dp(5), 0, 0)
+        }
+        defaultCard.addView(defaultHeader)
+        defaultCard.addView(defaultText)
+        addCard(root, defaultCard, dp(20))
+
         val fileCard = card().apply {
             setPadding(dp(16), dp(16), dp(16), dp(16))
         }
         fileCard.addView(sectionTitle("Projeto de origem"))
-        val fileHint = TextView(this).apply {
-            text = "Aceita .FLP e .ZIP com um FLP dentro. ZIPs podem trazer WAV/MP3 junto."
-            textSize = 13f
-            setTextColor(COLOR_MUTED)
-            setPadding(0, dp(5), 0, dp(13))
-        }
-        fileCard.addView(fileHint)
+        fileCard.addView(optionDescription(
+            "Aceita .FLP e Zipped Loop Package (.ZIP) com um FLP dentro. O ZIP também pode conter WAV, MP3 e outros samples."
+        ))
 
         chooseButton = Button(this).apply {
             text = "SELECIONAR .FLP OU .ZIP"
@@ -130,8 +148,8 @@ class MainActivity : Activity() {
         fileCard.addView(chooseButton, matchWrap())
 
         sourceBadge = TextView(this).apply {
-            text = "MODO BÁSICO"
-            textSize = 11f
+            text = "AGUARDANDO ARQUIVO"
+            textSize = 10f
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(COLOR_ACCENT)
             background = rounded(Color.rgb(24, 53, 43), 999f)
@@ -147,23 +165,23 @@ class MainActivity : Activity() {
             text = "Nenhum projeto selecionado."
             textSize = 13f
             setTextColor(COLOR_TEXT)
-            setLineSpacing(0f, 1.12f)
+            setLineSpacing(0f, 1.13f)
             setPadding(0, dp(12), 0, 0)
         }
         fileCard.addView(status, matchWrap())
-        addCard(root, fileCard, dp(24))
+        addCard(root, fileCard, dp(14))
 
         val optionsCard = card().apply {
             setPadding(dp(16), dp(16), dp(16), dp(12))
         }
-        optionsCard.addView(sectionTitle("Opções de conversão"))
+        optionsCard.addView(sectionTitle("Extras opcionais"))
         optionsCard.addView(optionDescription(
-            "Por padrão o app gera um único FLM limpo: DirectWave vazio + notas e slides."
+            "Tudo abaixo começa desligado. Ative somente o que quiser levar para o Mobile."
         ))
 
         effectsSwitch = optionSwitch(
             title = "Efeitos do FL Studio PC",
-            description = "Traduz EQ, reverb, compressor, delay e outros efeitos compatíveis com settings adaptados."
+            description = "Traduz EQ, reverb, compressor, limiter, delay e outros módulos compatíveis com settings adaptados."
         )
         effectsSwitch.isChecked = false
         effectsSwitch.isEnabled = false
@@ -171,19 +189,21 @@ class MainActivity : Activity() {
 
         bpmSwitch = optionSwitch(
             title = "Separar BPM Change",
-            description = "Cria uma parte FLM por trecho de BPM para contornar a falta de automação de tempo no Mobile."
+            description = "Cria um FLM para cada trecho de BPM; cada parte começa no zero com o tempo correto."
         )
         bpmSwitch.isChecked = false
         bpmSwitch.isEnabled = false
         optionsCard.addView(bpmSwitch)
 
-        val audioAuto = TextView(this).apply {
-            text = "Áudio em ZIP: automático • samples usados pelo FLP são recriados como canais de áudio."
-            textSize = 12f
-            setTextColor(COLOR_DIM)
-            setPadding(dp(4), dp(12), dp(4), dp(4))
-        }
-        optionsCard.addView(audioAuto)
+        audioSwitch = optionSwitch(
+            title = "Importar áudios do ZIP",
+            description = "Usa os samples encontrados no pacote e recria os Audio Clips como canais de áudio do Mobile."
+        )
+        audioSwitch.isChecked = false
+        audioSwitch.isEnabled = false
+        audioSwitch.visibility = View.GONE
+        optionsCard.addView(audioSwitch)
+
         addCard(root, optionsCard, dp(14))
 
         convertButton = Button(this).apply {
@@ -191,7 +211,7 @@ class MainActivity : Activity() {
             textSize = 15f
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(Color.WHITE)
-            background = rounded(Color.rgb(47, 83, 70), 14f)
+            background = rounded(COLOR_BUTTON, 14f)
             isEnabled = false
             setPadding(dp(12), dp(7), dp(12), dp(7))
             setOnClickListener { convertToFlm() }
@@ -207,7 +227,7 @@ class MainActivity : Activity() {
         root.addView(progress, progressParams)
 
         val footer = TextView(this).apply {
-            text = "Conversor experimental • o arquivo original nunca é modificado."
+            text = "Conversor experimental • o arquivo original nunca é modificado"
             textSize = 11f
             gravity = Gravity.CENTER
             setTextColor(COLOR_DIM)
@@ -217,6 +237,8 @@ class MainActivity : Activity() {
 
         effectsSwitch.setOnCheckedChangeListener { _, _ -> updateConvertLabel() }
         bpmSwitch.setOnCheckedChangeListener { _, _ -> updateConvertLabel() }
+        audioSwitch.setOnCheckedChangeListener { _, _ -> updateConvertLabel() }
+
         setContentView(scroll)
     }
 
@@ -226,7 +248,12 @@ class MainActivity : Activity() {
             type = "*/*"
             putExtra(
                 Intent.EXTRA_MIME_TYPES,
-                arrayOf("application/octet-stream", "application/zip", "application/x-zip-compressed", "*/*")
+                arrayOf(
+                    "application/octet-stream",
+                    "application/zip",
+                    "application/x-zip-compressed",
+                    "*/*"
+                )
             )
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
         }
@@ -237,10 +264,18 @@ class MainActivity : Activity() {
         val project = selectedProject ?: return
         val useEffects = effectsSwitch.isChecked && selectedMixer.compatibleEffects.isNotEmpty()
         val useBpmSplit = bpmSwitch.isChecked && selectedTempoScan.hasChanges
+        val useAudio = audioSwitch.isChecked &&
+            selectedZipBundle != null &&
+            selectedResolvedAudio.isNotEmpty()
+
         val base = sanitizeName(
-            selectedName?.substringBeforeLast('.')
-                ?: selectedZipBundle?.flpEntryName?.substringAfterLast('/')?.substringBeforeLast('.')
-                ?: "projeto-convertido"
+            if (selectedZipBundle != null) {
+                selectedZipBundle?.flpEntryName
+                    ?.substringAfterLast('/')
+                    ?.substringBeforeLast('.')
+            } else {
+                selectedName?.substringBeforeLast('.')
+            } ?: "projeto-convertido"
         )
 
         setBusy(true, "Montando o projeto Mobile...")
@@ -269,36 +304,48 @@ class MainActivity : Activity() {
 
                     var bytes: ByteArray
                     var summary: String
+
                     if (useEffects) {
-                        val effectResult = FlmEffectAwareWriter.write(segment.project, partBase, selectedMixer)
+                        val effectResult = FlmEffectAwareWriter.write(
+                            segment.project,
+                            partBase,
+                            selectedMixer
+                        )
                         bytes = effectResult.bytes
                         summary = effectSummary(effectResult)
                     } else {
                         bytes = FlmWriter.write(segment.project, partBase)
-                        summary = "Modo básico • efeitos do PC não adicionados"
+                        summary = "Modo padrão • notes e slides • sem FX do PC"
                     }
 
-                    val partAudioScan = if (useBpmSplit) {
-                        sliceAudioScan(selectedAudioScan, segment.startTick, segment.endTick)
-                    } else {
-                        selectedAudioScan
-                    }
-                    val audioResult = FlmAudioWriter.write(
-                        baseFlm = bytes,
-                        project = segment.project,
-                        audioScan = partAudioScan,
-                        resolvedAssets = selectedResolvedAudio
-                    )
-                    bytes = audioResult.bytes
-
-                    summary += buildString {
-                        if (audioResult.audioChannels > 0) {
-                            append("\nÁudio do ZIP: ").append(audioResult.audioChannels)
-                                .append(" canal(is), ").append(audioResult.audioClips).append(" clip(s)")
+                    var usedAssets: List<ResolvedZipAudio> = emptyList()
+                    if (useAudio) {
+                        val partAudioScan = if (useBpmSplit) {
+                            sliceAudioScan(selectedAudioScan, segment.startTick, segment.endTick)
+                        } else {
+                            selectedAudioScan
                         }
-                        if (audioResult.missingSamplePaths.isNotEmpty()) {
-                            append("\nÁudios sem arquivo no ZIP: ")
-                                .append(audioResult.missingSamplePaths.size)
+                        val audioResult = FlmAudioWriter.write(
+                            baseFlm = bytes,
+                            project = segment.project,
+                            audioScan = partAudioScan,
+                            resolvedAssets = selectedResolvedAudio
+                        )
+                        bytes = audioResult.bytes
+                        usedAssets = audioResult.usedAssets
+
+                        summary += buildString {
+                            if (audioResult.audioChannels > 0) {
+                                append("\nÁudio do ZIP: ")
+                                    .append(audioResult.audioChannels)
+                                    .append(" canal(is), ")
+                                    .append(audioResult.audioClips)
+                                    .append(" clip(s)")
+                            }
+                            if (audioResult.missingSamplePaths.isNotEmpty()) {
+                                append("\nÁudios sem match no ZIP: ")
+                                    .append(audioResult.missingSamplePaths.size)
+                            }
                         }
                     }
 
@@ -309,7 +356,7 @@ class MainActivity : Activity() {
                         startTick = segment.startTick,
                         endTick = segment.endTick,
                         summary = summary,
-                        usedAssets = audioResult.usedAssets
+                        usedAssets = usedAssets
                     )
                 }
 
@@ -334,8 +381,11 @@ class MainActivity : Activity() {
             if (parts.size > 1) {
                 append(parts.size).append(" partes de BPM geradas:\n")
                 parts.forEach { part ->
-                    append("• ").append(part.fileName)
-                        .append(" — ").append(formatTempo(part.bpm)).append(" BPM\n")
+                    append("• ")
+                        .append(part.fileName)
+                        .append(" — ")
+                        .append(formatTempo(part.bpm))
+                        .append(" BPM\n")
                 }
                 append('\n')
             }
@@ -398,8 +448,10 @@ class MainActivity : Activity() {
                 }
                 loadProject(uri)
             }
+
             REQUEST_SAVE_FLM -> data?.data?.let(::saveFlm)
             REQUEST_SAVE_PACKAGE -> data?.data?.let(::saveZipPackage)
+
             REQUEST_SAVE_FLM_FOLDER -> data?.data?.let { treeUri ->
                 val grantedFlags = data.flags and
                     (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
@@ -480,6 +532,7 @@ class MainActivity : Activity() {
 
                 runOnUiThread {
                     if (isFinishing || isDestroyed) return@runOnUiThread
+
                     selectedInputUri = uri
                     selectedName = displayName
                     selectedProject = project
@@ -491,11 +544,29 @@ class MainActivity : Activity() {
 
                     effectsSwitch.isChecked = false
                     effectsSwitch.isEnabled = mixer.compatibleEffects.isNotEmpty()
+
                     bpmSwitch.isChecked = false
                     bpmSwitch.isEnabled = tempoScan.hasChanges
 
-                    sourceBadge.text = if (bundle != null) "ZIP + MÍDIA" else "FLP"
-                    status.text = projectSummary(displayName, project, mixer, tempoScan, audioScan, bundle, resolved)
+                    audioSwitch.isChecked = false
+                    audioSwitch.visibility = if (bundle != null) View.VISIBLE else View.GONE
+                    audioSwitch.isEnabled = bundle != null && resolved.isNotEmpty()
+
+                    sourceBadge.text = when {
+                        bundle != null && resolved.isNotEmpty() -> "ZIP • FLP + MÍDIA DISPONÍVEL"
+                        bundle != null -> "ZIP • FLP INTERNO"
+                        else -> "ARQUIVO FLP"
+                    }
+
+                    status.text = projectSummary(
+                        displayName,
+                        project,
+                        mixer,
+                        tempoScan,
+                        audioScan,
+                        bundle,
+                        resolved
+                    )
                     setBusy(false)
                     convertButton.isEnabled = true
                     updateConvertLabel()
@@ -521,47 +592,67 @@ class MainActivity : Activity() {
         resolved: List<ResolvedZipAudio>
     ): String = buildString {
         append(displayName)
-        if (bundle != null) append("\nFLP interno: ").append(bundle.flpEntryName)
-        append("\n").append(formatTempo(project.tempo)).append(" BPM")
-            .append("  •  PPQ ").append(project.ppq)
-        append("\n").append(project.noteCount).append(" notas")
-            .append("  •  ").append(project.slideNoteCount).append(" slides")
-        append("  •  ").append(project.patterns.size).append(" patterns")
+        if (bundle != null) {
+            append("\nFLP interno: ").append(bundle.flpEntryName)
+        }
+        append("\n")
+            .append(formatTempo(project.tempo))
+            .append(" BPM  •  PPQ ")
+            .append(project.ppq)
+
+        append("\n")
+            .append(project.noteCount)
+            .append(" notes  •  ")
+            .append(project.slideNoteCount)
+            .append(" slides  •  ")
+            .append(project.patterns.size)
+            .append(" patterns")
 
         if (mixer.allEffects.isNotEmpty()) {
-            append("\nFX PC: ").append(mixer.compatibleEffects.size)
-                .append(" compatíveis de ").append(mixer.allEffects.size)
+            append("\nFX PC disponíveis: ")
+                .append(mixer.compatibleEffects.size)
+                .append(" compatíveis de ")
+                .append(mixer.allEffects.size)
         } else {
             append("\nFX PC: nenhum")
         }
 
         if (tempoScan.hasChanges) {
-            append("\nBPM Change: ")
+            append("\nBPM Change disponível: ")
             append(tempoScan.changes.joinToString(" → ") { formatTempo(it.bpm) })
         } else {
             append("\nBPM Change: não detectado")
         }
 
         if (bundle != null) {
-            append("\nZIP: ").append(bundle.mediaEntries.size).append(" áudio(s) encontrado(s)")
-            append("  •  ").append(resolved.size).append(" ligado(s) ao FLP")
+            append("\nMídia no ZIP: ")
+                .append(bundle.mediaEntries.size)
+                .append(" arquivo(s)  •  ")
+                .append(resolved.size)
+                .append(" ligado(s) aos Audio Clips")
             if (audioScan.usedChannels.size > resolved.size) {
-                append("  •  ").append(audioScan.usedChannels.size - resolved.size).append(" sem match")
+                append("  •  ")
+                    .append(audioScan.usedChannels.size - resolved.size)
+                    .append(" sem match")
             }
+            append("\nImportação de áudio: desligada por padrão")
         } else if (audioScan.usedChannels.isNotEmpty()) {
-            append("\nAudio Clips: ").append(audioScan.usedChannels.size)
-                .append(" detectado(s), mas o .FLP sozinho não inclui os arquivos de áudio")
+            append("\nAudio Clips detectados: ")
+                .append(audioScan.usedChannels.size)
+                .append(" • o FLP sozinho não contém os arquivos de áudio")
         }
     }
 
     private fun sliceAudioScan(scan: FlpAudioScan, start: Long, end: Long): FlpAudioScan {
         if (scan.placements.isEmpty() || end == Long.MAX_VALUE) return scan
         val sliced = mutableListOf<FlpAudioPlacement>()
+
         for (placement in scan.activePlacements) {
             val sourceEnd = placement.position + placement.length
             val clippedStart = max(placement.position, start)
             val clippedEnd = min(sourceEnd, end)
             if (clippedEnd <= clippedStart) continue
+
             val consumed = (clippedStart - placement.position).coerceAtLeast(0L)
             sliced += placement.copy(
                 position = clippedStart - start,
@@ -574,7 +665,8 @@ class MainActivity : Activity() {
 
     private fun saveFlm(uri: Uri) {
         try {
-            val output = pendingOutput ?: throw IOException("Nenhum projeto convertido disponível.")
+            val output = pendingOutput
+                ?: throw IOException("Nenhum projeto convertido disponível.")
             contentResolver.openOutputStream(uri, "w")?.use { it.write(output) }
                 ?: throw IOException("Não foi possível salvar o arquivo.")
             status.text = "Projeto FLM salvo.\n${pendingSummary.orEmpty()}"
@@ -592,8 +684,8 @@ class MainActivity : Activity() {
         val parts = pendingParts
         val assets = pendingPackageAssets
         if (parts.isEmpty()) return
-        setBusy(true, "Empacotando FLM e My Samples...")
 
+        setBusy(true, "Empacotando FLM e My Samples...")
         Thread {
             try {
                 contentResolver.openOutputStream(uri, "w")?.use { rawOut ->
@@ -604,8 +696,11 @@ class MainActivity : Activity() {
                             zipOut.closeEntry()
                         }
 
-                        val wanted = assets.associateBy { normalizePath(it.sourceEntryName).lowercase(Locale.ROOT) }
+                        val wanted = assets.associateBy {
+                            normalizePath(it.sourceEntryName).lowercase(Locale.ROOT)
+                        }
                         val written = hashSetOf<String>()
+
                         contentResolver.openInputStream(sourceUri)?.use { source ->
                             ZipInputStream(source.buffered()).use { zipIn ->
                                 while (true) {
@@ -651,8 +746,8 @@ class MainActivity : Activity() {
     private fun saveFlmParts(treeUri: Uri) {
         val parts = pendingParts
         if (parts.isEmpty()) return
-        setBusy(true, "Criando pasta e salvando ${parts.size} partes...")
 
+        setBusy(true, "Criando pasta e salvando ${parts.size} partes...")
         Thread {
             try {
                 val rootId = DocumentsContract.getTreeDocumentId(treeUri)
@@ -671,6 +766,7 @@ class MainActivity : Activity() {
                         "application/octet-stream",
                         part.fileName
                     ) ?: throw IOException("Não foi possível criar ${part.fileName}.")
+
                     contentResolver.openOutputStream(document, "w")?.use { stream ->
                         stream.write(part.bytes)
                     } ?: throw IOException("Não foi possível salvar ${part.fileName}.")
@@ -698,23 +794,29 @@ class MainActivity : Activity() {
         append("FX Mobile: ").append(result.addedEffects)
         append(" • settings diretos ").append(result.directSettings)
         append(" • adaptados ").append(result.adaptedSettings)
-        if (result.defaultSettings > 0) append(" • padrão ").append(result.defaultSettings)
+        if (result.defaultSettings > 0) {
+            append(" • padrão ").append(result.defaultSettings)
+        }
         if (result.unsupportedEffects.isNotEmpty()) {
-            append("\nSem equivalente: ").append(result.unsupportedEffects.joinToString(", "))
+            append("\nSem equivalente: ")
+                .append(result.unsupportedEffects.joinToString(", "))
         }
     }
 
     private fun updateConvertLabel() {
-        val project = selectedProject
-        if (project == null) {
+        if (selectedProject == null) {
             convertButton.text = "GERAR FLM"
             return
         }
+
         val split = bpmSwitch.isChecked && selectedTempoScan.hasChanges
-        val hasAudioPackage = selectedResolvedAudio.isNotEmpty() && selectedZipBundle != null
+        val includeAudio = audioSwitch.isChecked &&
+            selectedResolvedAudio.isNotEmpty() &&
+            selectedZipBundle != null
+
         convertButton.text = when {
-            hasAudioPackage && split -> "GERAR PACOTE ZIP COM PARTES"
-            hasAudioPackage -> "GERAR PACOTE ZIP + ÁUDIO"
+            includeAudio && split -> "GERAR PACOTE ZIP COM PARTES"
+            includeAudio -> "GERAR PACOTE FLM + ÁUDIO"
             split -> "GERAR PARTES FLM"
             else -> "GERAR FLM"
         }
@@ -729,29 +831,60 @@ class MainActivity : Activity() {
         selectedAudioScan = FlpAudioScan.EMPTY
         selectedZipBundle = null
         selectedResolvedAudio = emptyList()
+
         pendingOutput = null
         pendingParts = emptyList()
         pendingPackageAssets = emptyList()
-        effectsSwitch.isChecked = false
-        effectsSwitch.isEnabled = false
-        bpmSwitch.isChecked = false
-        bpmSwitch.isEnabled = false
-        convertButton.isEnabled = false
-        sourceBadge.text = "MODO BÁSICO"
+
+        if (::effectsSwitch.isInitialized) {
+            effectsSwitch.isChecked = false
+            effectsSwitch.isEnabled = false
+        }
+        if (::bpmSwitch.isInitialized) {
+            bpmSwitch.isChecked = false
+            bpmSwitch.isEnabled = false
+        }
+        if (::audioSwitch.isInitialized) {
+            audioSwitch.isChecked = false
+            audioSwitch.isEnabled = false
+            audioSwitch.visibility = View.GONE
+        }
+        if (::convertButton.isInitialized) {
+            convertButton.isEnabled = false
+        }
+        if (::sourceBadge.isInitialized) {
+            sourceBadge.text = "AGUARDANDO ARQUIVO"
+        }
     }
 
     private fun queryName(uri: Uri): String? {
-        contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+        contentResolver.query(
+            uri,
+            arrayOf(OpenableColumns.DISPLAY_NAME),
+            null,
+            null,
+            null
+        )?.use { cursor ->
             val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-            if (index >= 0 && cursor.moveToFirst() && !cursor.isNull(index)) return cursor.getString(index)
+            if (index >= 0 && cursor.moveToFirst() && !cursor.isNull(index)) {
+                return cursor.getString(index)
+            }
         }
         return null
     }
 
     private fun querySize(uri: Uri): Long {
-        contentResolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use { cursor ->
+        contentResolver.query(
+            uri,
+            arrayOf(OpenableColumns.SIZE),
+            null,
+            null,
+            null
+        )?.use { cursor ->
             val index = cursor.getColumnIndex(OpenableColumns.SIZE)
-            if (index >= 0 && cursor.moveToFirst() && !cursor.isNull(index)) return cursor.getLong(index)
+            if (index >= 0 && cursor.moveToFirst() && !cursor.isNull(index)) {
+                return cursor.getLong(index)
+            }
         }
         return -1L
     }
@@ -762,6 +895,9 @@ class MainActivity : Activity() {
         convertButton.isEnabled = !busy && selectedProject != null
         effectsSwitch.isEnabled = !busy && selectedMixer.compatibleEffects.isNotEmpty()
         bpmSwitch.isEnabled = !busy && selectedTempoScan.hasChanges
+        audioSwitch.isEnabled = !busy &&
+            selectedZipBundle != null &&
+            selectedResolvedAudio.isNotEmpty()
         if (message != null) status.text = message
     }
 
@@ -771,9 +907,9 @@ class MainActivity : Activity() {
         Toast.makeText(this, "$prefix: $detail", Toast.LENGTH_LONG).show()
     }
 
-    private fun card(): LinearLayout = LinearLayout(this).apply {
+    private fun card(fill: Int = COLOR_CARD): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
-        background = rounded(COLOR_CARD, 18f, COLOR_STROKE)
+        background = rounded(fill, 18f, COLOR_STROKE)
     }
 
     private fun addCard(root: LinearLayout, view: View, top: Int) {
@@ -792,6 +928,7 @@ class MainActivity : Activity() {
         text = value
         textSize = 12f
         setTextColor(COLOR_MUTED)
+        setLineSpacing(0f, 1.08f)
         setPadding(0, dp(5), 0, dp(8))
     }
 
@@ -799,6 +936,7 @@ class MainActivity : Activity() {
         text = "$title\n$description"
         textSize = 13f
         setTextColor(COLOR_TEXT)
+        setLineSpacing(0f, 1.06f)
         setPadding(dp(4), dp(10), dp(2), dp(10))
         showText = false
     }
@@ -816,13 +954,20 @@ class MainActivity : Activity() {
         ViewGroup.LayoutParams.WRAP_CONTENT
     )
 
-    private fun dp(value: Int): Int = (value * resources.displayMetrics.density + 0.5f).toInt()
+    private fun dp(value: Int): Int =
+        (value * resources.displayMetrics.density + 0.5f).toInt()
 
     private fun sanitizeName(value: String): String =
-        value.replace(Regex("[\\/:*?\"<>|]"), "_").trim().ifBlank { "projeto-convertido" }
+        value.replace(Regex("[\\/:*?\"<>|]"), "_")
+            .trim()
+            .ifBlank { "projeto-convertido" }
 
     private fun formatTempo(tempo: Double): String =
-        if (tempo % 1.0 == 0.0) tempo.toInt().toString() else String.format(Locale.US, "%.3f", tempo)
+        if (tempo % 1.0 == 0.0) {
+            tempo.toInt().toString()
+        } else {
+            String.format(Locale.US, "%.3f", tempo)
+        }
 
     companion object {
         private const val REQUEST_OPEN_PROJECT = 1001
@@ -830,12 +975,14 @@ class MainActivity : Activity() {
         private const val REQUEST_SAVE_FLM_FOLDER = 1003
         private const val REQUEST_SAVE_PACKAGE = 1004
 
-        private val COLOR_BG = Color.rgb(10, 14, 22)
-        private val COLOR_CARD = Color.rgb(18, 25, 36)
-        private val COLOR_STROKE = Color.rgb(40, 54, 68)
+        private val COLOR_BG = Color.rgb(8, 12, 19)
+        private val COLOR_CARD = Color.rgb(17, 24, 35)
+        private val COLOR_CARD_SOFT = Color.rgb(15, 31, 28)
+        private val COLOR_STROKE = Color.rgb(38, 53, 68)
         private val COLOR_ACCENT = Color.rgb(74, 236, 153)
-        private val COLOR_TEXT = Color.rgb(224, 231, 239)
-        private val COLOR_MUTED = Color.rgb(153, 165, 179)
-        private val COLOR_DIM = Color.rgb(105, 119, 135)
+        private val COLOR_BUTTON = Color.rgb(43, 77, 65)
+        private val COLOR_TEXT = Color.rgb(225, 232, 240)
+        private val COLOR_MUTED = Color.rgb(151, 164, 179)
+        private val COLOR_DIM = Color.rgb(102, 117, 133)
     }
 }
